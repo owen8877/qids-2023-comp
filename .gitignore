@@ -1,0 +1,9 @@
+/misc
+/data
+/working
+/model
+
+/.idea
+
+.ipynb
+__pycache__

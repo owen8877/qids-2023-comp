@@ -3,8 +3,8 @@ import random
 random.seed(20230206)
 
 SUBMISSION_PATH = 'working/submission.csv'
-TEST_MARKET_PATH = 'data/first_round_test_market_data.csv'
-TEST_FUNADMENTAL_PATH = 'data/first_round_test_fundamental_data.csv'
+TEST_MARKET_PATH = 'data/raw/first_round_test_market_data.csv'
+TEST_FUNADMENTAL_PATH = 'data/raw/first_round_test_fundamental_data.csv'
 POINT_PER_DAY = 50
 
 class QIDS:

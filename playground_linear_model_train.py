@@ -1,53 +1,48 @@
+import numpy as np
 import pandas as pd
-from pandas import Series, MultiIndex
 from sklearn.linear_model import LinearRegression
-from sklearn.model_selection import KFold
-from joblib import dump
+from sklearn.model_selection import TimeSeriesSplit
 
-__num_of_stocks = 54
-__point_per_day = 50
+from pipeline import Dataset
 
-f_df = pd.read_csv('data/first_round_train_fundamental_data.csv')
-m_df = pd.read_csv('data/first_round_train_market_data.csv')
-r_df = pd.read_csv('data/first_round_train_return_data.csv')
-
-
-def parse_date_time_column(s: Series):
-    return s.str.split(pat='s|d|p', expand=True).iloc[:, 1:].astype(int).rename(columns={1: 'asset', 2: 'day', 3: 'timeslot'})
-
-
-def parse_date_column(s: Series):
-    return s.str.split(pat='s|d', expand=True).iloc[:, 1:].astype(int).rename(columns={1: 'asset', 2: 'day'})
+dataset = Dataset.load()
+m_agg_df = pd.concat([
+    dataset.market.set_index('timeslot').loc[1].set_index(['asset', 'day'])['open'],
+    dataset.market.set_index('timeslot').loc[50].set_index(['asset', 'day'])['close'],
+    dataset.market.groupby(['asset', 'day']).agg(high=('high', max), low=('low', min), var=('close', np.std),
+                                                 avg=('close', np.mean), volume=('volume', np.sum),
+                                                 money=('money', np.sum)),
+], axis=1)
+full_df = pd.concat(
+    [m_agg_df, dataset.fundamental.set_index(['asset', 'day']), dataset.ref_return.set_index(['asset', 'day'])],
+    axis=1).dropna()
 
 
-def pre_process_df_with_date_time(df):
-    date_time_series = df['date_time']
-    df.drop(columns='date_time', inplace=True)
-    df.index = MultiIndex.from_frame(parse_date_time_column(date_time_series))
+# construct feature
+def get_single_day_return(s):
+    return (s.shift(-1) / s - 1).fillna(0)
 
 
-def pre_process_df_with_date(df):
-    date_series = df['date_time']
-    df.drop(columns='date_time', inplace=True)
-    df.index = MultiIndex.from_frame(parse_date_column(date_series))
+wdf = dataset.market.groupby(by='asset').apply(
+    lambda df: get_single_day_return(df.set_index('timeslot').loc[50].set_index('day')['close']))
+hold_1_return = wdf.reset_index().melt(id_vars=['asset'], value_vars=wdf.columns,
+                                       value_name='hold_1_return').sort_values(by=['asset', 'day']).reset_index(
+    drop=True)
+day_before_hold_1_return = hold_1_return.set_index(['asset', 'day']).groupby(level=0).shift(1, fill_value=0)
+full_df['hold_1_return'] = hold_1_return.set_index(['asset', 'day'])
+full_df['day_before_hold_1_return'] = day_before_hold_1_return
 
+full_df_swap = full_df.swaplevel().sort_index()
+X = full_df_swap[['close', 'volume', 'money', 'std', 'turnoverRatio', 'transactionAmount', 'pe_ttm', 'pcf']]
+# X = full_df[['day_before_hold_1_return']]
+y = full_df_swap['return']
 
-pre_process_df_with_date_time(m_df)
-pre_process_df_with_date(r_df)
-pre_process_df_with_date(f_df)
-
-m_agg_df = m_df.groupby(level=[0, 1]).mean().sort_index()
-full_df = pd.concat([m_agg_df, f_df, r_df], axis=1).dropna()
-
-X = full_df[['close', 'volume', 'money', 'turnoverRatio', 'transactionAmount', 'pe_ttm', 'pcf']]
-y = full_df['return']
-
-kf = KFold(n_splits=5, shuffle=True, random_state=10)
-for train, test in kf.split(full_df.index):
+tscv = TimeSeriesSplit(n_splits=5)
+for train, test in tscv.split(full_df_swap):
     reg = LinearRegression().fit(X.iloc[train], y.iloc[train])
     train_score = reg.score(X.iloc[train], y.iloc[train])
     test_score = reg.score(X.iloc[test], y.iloc[test])
     print(f'train score: {train_score:.4f}, test score: {test_score:.4f}')
 
 final_model = LinearRegression().fit(X, y)
-dump(final_model, 'model/linear/param.joblib')
+# dump(final_model, 'model/linear/param.joblib')

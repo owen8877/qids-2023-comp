@@ -11,7 +11,7 @@ __point_per_day = 50
 
 env = make_env()
 
-model: LinearRegression = load('model/linear/param.joblib')
+model: LinearRegression = load('../../model/linear/param.joblib')
 
 while not env.is_end():
     f_df, m_df = env.get_current_market()

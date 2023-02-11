@@ -39,8 +39,12 @@ def pre_process_df_with_date(df: DataFrame):
 
 class Test(TestCase):
     def test_parse_raw_df_and_dump(self):
-        f_df = pre_process_df_with_date(pd.read_csv('../data/raw/first_round_train_fundamental_data.csv'))
-        m_df = pre_process_df_with_date_time(pd.read_csv('../data/raw/first_round_train_market_data.csv'))
-        r_df = pre_process_df_with_date(pd.read_csv('../data/raw/first_round_train_return_data.csv'))
-
-        Dataset(m_df, f_df, r_df).dump('../data/parsed')
+        try:
+            f_df = pre_process_df_with_date(pd.read_csv('../data/raw/first_round_train_fundamental_data.csv'))
+            m_df = pre_process_df_with_date_time(pd.read_csv('../data/raw/first_round_train_market_data.csv'))
+            r_df = pre_process_df_with_date(pd.read_csv('../data/raw/first_round_train_return_data.csv'))
+            Dataset(m_df, f_df, r_df).dump('../data/parsed')
+        except FileNotFoundError as e:
+            print('csv raw data not found! make sure that the training fundamental/market/return data '
+                  'is under the @/data/raw folder')
+            raise e

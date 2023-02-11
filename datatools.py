@@ -5,8 +5,6 @@ from sklearn.decomposition import TruncatedSVD, PCA
 from sklearn import metrics
 
 
-
-
 def standardize_pd(Xin):
     """
     Parameters
@@ -17,9 +15,9 @@ def standardize_pd(Xin):
     -------
     <pd.DataFrame> the column-wise standardized dataset
     """
-    
-    return Xin-Xin.min()/(Xin.max()-Xin.min())
-    
+
+    return Xin - Xin.min() / (Xin.max() - Xin.min())
+
 
 def make_clean_data(pd_data, verbose=False):
     """
@@ -84,7 +82,7 @@ def make_clean_data(pd_data, verbose=False):
 
     # Check if clean
     assert np.size(clean_data.isna().sum(axis=1).to_numpy().nonzero()[
-                   0]) == 0, "Clean data still contains NaN"
+                       0]) == 0, "Clean data still contains NaN"
 
     # Check the number of resulting data points
     # if verbose:
@@ -95,7 +93,6 @@ def make_clean_data(pd_data, verbose=False):
     return clean_data, missing_dict, bad_rows_index
 
 
-
 def remove_quantiles(pd_data, p=1):
     percentile = p
     quantile = percentile / 100
@@ -104,9 +101,9 @@ def remove_quantiles(pd_data, p=1):
 
     for feature in pd_data.columns:
         feature_series = pd_data[feature]
-        quantile_filter = np.quantile(feature_series, [quantile, 1-quantile])
+        quantile_filter = np.quantile(feature_series, [quantile, 1 - quantile])
         feature_outside = feature_series[(feature_series < quantile_filter[0]) | (
-            feature_series > quantile_filter[1])]
+                feature_series > quantile_filter[1])]
         # outside_indices = feature_outside.index
         remove_indices += list(feature_outside.index)
     remove_indices = list(set(remove_indices))
@@ -115,14 +112,14 @@ def remove_quantiles(pd_data, p=1):
     pd_data_reduced = pd_data.drop(remove_indices)
 
     # Calculate what percent of total data is captured in these indices
-    percent_removed = 100*(len(remove_indices)/pd_data.index.shape[0])
+    percent_removed = 100 * (len(remove_indices) / pd_data.index.shape[0])
     print('Percent of Data Removed Across These Quantiles Is: ', percent_removed)
 
     return pd_data_reduced, percent_removed
 
 
 def run_svd(pd_data, percent_var=95):
-# def run_svd(data, rank = 3):
+    # def run_svd(data, rank = 3):
     """
     :pd_data: the dataframe containing the 'already standardized'] data 
     :percent_var: float - a value between [0,100]
@@ -130,36 +127,36 @@ def run_svd(pd_data, percent_var=95):
     # add checking if percent_var between 0 and 100
 
     # Calculate the desired number of SVD components in the decomposition
-    start_rank = (pd_data.shape[-1]-1)
+    start_rank = (pd_data.shape[-1] - 1)
     # Make instance of SVD object class from scikit-learn and run the decomposition
     # Issue: scikitlearn TruncatedSVD only allows n_components < n_features (strictly)
 
-    SVD = TruncatedSVD(n_components= start_rank)
+    SVD = TruncatedSVD(n_components=start_rank)
     SVD.fit(pd_data)
     X_SVD = SVD.transform(pd_data)
 
     # Wrap the output as a dataframe
     X_SVD = pd.DataFrame(
-        X_SVD, columns=['Singular Component '+str(i+1) for i in range(X_SVD.shape[-1])])
+        X_SVD, columns=['Singular Component ' + str(i + 1) for i in range(X_SVD.shape[-1])])
 
     # Calculate the number of components needed to reach variance threshold
     var_per_comp = SVD.explained_variance_ratio_
 
     # Calculate the total variance explainend in the first k components
-    total_var = 100*np.cumsum(var_per_comp)
+    total_var = 100 * np.cumsum(var_per_comp)
     print('------------- SVD Output ----------------')
     print('Percent Variance Explained By First ' +
-          str(start_rank)+' Components: ', total_var, '\n\n')
-    #rank = np.nonzero(total_var>=var_threshold)[0][0]+1
+          str(start_rank) + ' Components: ', total_var, '\n\n')
+    # rank = np.nonzero(total_var>=var_threshold)[0][0]+1
     rank = (next(x for x, val in enumerate(total_var) if val > percent_var))
     rank += 1
 
     if rank == 0:
-        print('No quantity of components leq to '+str(start_rank+1) +
-              ' can explain '+str(percent_var)+'% variance.')
+        print('No quantity of components leq to ' + str(start_rank + 1) +
+              ' can explain ' + str(percent_var) + '% variance.')
     else:
-        print(str(total_var[rank-1])+'% variance '+'explained by '+str(rank)+' components. ' +
-              'Variance Threshold Was '+str(percent_var)+'.\n\n')
+        print(str(total_var[rank - 1]) + '% variance ' + 'explained by ' + str(rank) + ' components. ' +
+              'Variance Threshold Was ' + str(percent_var) + '.\n\n')
 
     return X_SVD, rank, percent_var, total_var
 
@@ -173,7 +170,7 @@ def data_quantization(pd_data, scale=10):
     :return: data_quantile: the quantized data
              percent_of_zero: at least that much percent of feature are zeros
     """
-    p = np.linspace(0, scale, scale+1) * 0.1
+    p = np.linspace(0, scale, scale + 1) * 0.1
     data_quantile = pd_data.copy()
     percent_of_zero = {}
     eps = 1e-5
@@ -186,12 +183,12 @@ def data_quantization(pd_data, scale=10):
             quantile_filter = np.quantile(
                 pd_data[feature], [quantile, p[i + 1]])
             data_quantile.loc[((pd_data[feature] > quantile_filter[0]) &
-                               (pd_data[feature] <= quantile_filter[1])), feature_new] = i+1
+                               (pd_data[feature] <= quantile_filter[1])), feature_new] = i + 1
 
             # deal with 0-quantile being non-zero
             if i == 0 and quantile_filter[0] > 0:
                 data_quantile.loc[((pd_data[feature] >= quantile_filter[0]) &
-                                   (pd_data[feature] <= quantile_filter[1])), feature_new] = i+1
+                                   (pd_data[feature] <= quantile_filter[1])), feature_new] = i + 1
 
             if quantile_filter[0] <= eps and quantile_filter[1] >= eps:
                 percent_of_zero[feature] = quantile
@@ -202,9 +199,5 @@ def data_quantization(pd_data, scale=10):
     return data_quantile, percent_of_zero
 
 
-
-
-
 if __name__ == "__main__":
-
     pass

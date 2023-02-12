@@ -4,6 +4,7 @@
   - mean volume
   - simple version signature: (DataFrame: single-indexed (timeslot,)) -> DataFrame
 - visualize market intraday and get some idea
+  - implement a simple visualization function that takes in the market dataframe and index of (asset, day)
   - https://github.com/matplotlib/mplfinance
 - backtest framework
   - build on existing draft

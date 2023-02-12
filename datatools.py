@@ -3,6 +3,7 @@ import numpy as np
 import numpy.matlib
 from sklearn.decomposition import TruncatedSVD, PCA
 from sklearn import metrics
+from pandas import Series, DataFrame
 
 
 def standardize_pd(Xin):
@@ -199,7 +200,7 @@ def data_quantization(pd_data, scale=10):
     return data_quantile, percent_of_zero
 
 
-def extract_market_data(m_df):
+def extract_market_data(m_df: DataFrame):
     """
     Input the market data and extract mean price using close
     prices, volatility and mean volume
@@ -207,7 +208,13 @@ def extract_market_data(m_df):
     :return: [pd.DataFrame] extracted features from market data
     """
     # sort indexing
-    m_df = m_df.swaplevel(0, 1)
+    if m_df.index.names == ['asset', 'day', 'timeslot']:
+        m_df = m_df.swaplevel(0, 1)
+    elif m_df.index.names == ['asset', 'day', 'timeslot']:
+        pass
+    else:
+        raise ValueError('Unsupported index ordering')
+
     m_df.reset_index(inplace=True)
     m_df = m_df.sort_values(['day', 'asset', 'timeslot'], ascending=[True, True, True])
     # convert back to multi_index

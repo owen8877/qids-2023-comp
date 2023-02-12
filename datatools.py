@@ -210,15 +210,12 @@ def extract_market_data(m_df: DataFrame):
     # sort indexing
     if m_df.index.names == ['asset', 'day', 'timeslot']:
         m_df = m_df.swaplevel(0, 1)
-    elif m_df.index.names == ['asset', 'day', 'timeslot']:
+    elif m_df.index.names == ['day', 'asset', 'timeslot']:
         pass
     else:
         raise ValueError('Unsupported index ordering')
 
-    m_df.reset_index(inplace=True)
-    m_df = m_df.sort_values(['day', 'asset', 'timeslot'], ascending=[True, True, True])
-    # convert back to multi_index
-    m_df.set_index(['day', 'asset', 'timeslot'], inplace=True)
+    m_df.sort_index(ascending=True, inplace=True)
 
     m_df_day = m_df.groupby(level=[0, 1])[['volume', 'money']].sum()
     # Compute average price

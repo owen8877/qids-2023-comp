@@ -11,6 +11,10 @@
 .idea/**/dictionaries
 .idea/**/shelf
 
+# Python interpreter stuff (diffs on every machine)
+.idea/**/misc.xml
+.idea/**/*.iml
+
 # Generated files
 .idea/**/contentModel.xml
 

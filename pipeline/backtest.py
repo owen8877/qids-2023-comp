@@ -29,9 +29,7 @@ def cross_validation(training: Callable[[DataFrame, Series], Any],
     """
     if df is None:
         dataset = Dataset.load(f'{__file__}/../data/parsed')
-        df = pd.concat(
-            [dataset.fundamental.set_index(['asset', 'day']), dataset.ref_return.set_index(['asset', 'day'])],
-            axis=1).dropna()
+        df = pd.concat([dataset.fundamental, dataset.ref_return], axis=1).dropna()
 
     if df.index.names != ['day', 'asset']:
         df = df.swaplevel().sort_index()
@@ -81,12 +79,11 @@ class Test(TestCase):
         from visualize.metric import plot_performance
         from matplotlib import pyplot as plt
         from datatools import data_quantization
+        from pipeline import load_mini_dataset
 
-        dataset = Dataset.load('../data/parsed')
-        quantized_fundamental, _ = data_quantization(dataset.fundamental.set_index(['asset', 'day']))
-        df = pd.concat(
-            [quantized_fundamental, dataset.fundamental.set_index(['asset', 'day']),
-             dataset.ref_return.set_index(['asset', 'day'])], axis=1).dropna()
+        dataset = load_mini_dataset('../data/parsed_mini', 10)
+        quantized_fundamental, _ = data_quantization(dataset.fundamental)
+        df = pd.concat([quantized_fundamental, dataset.fundamental, dataset.ref_return], axis=1).dropna()
         quantile_feature = ['turnoverRatio_QUANTILE', 'transactionAmount_QUANTILE', 'pb_QUANTILE', 'ps_QUANTILE',
                             'pe_ttm_QUANTILE', 'pe_QUANTILE', 'pcf_QUANTILE']
         original_feature = ['turnoverRatio', 'transactionAmount', 'pb', 'ps', 'pe_ttm', 'pe', 'pcf']
@@ -95,7 +92,7 @@ class Test(TestCase):
             reg = LinearRegression().fit(X, y)
             return reg
 
-        performance = cross_validation(linear_model, quantile_feature, df=df, n_splits=997, lookback_window=200)
+        performance = cross_validation(linear_model, quantile_feature, df=df, n_splits=9, lookback_window=5)
 
         plt.figure()
         plot_performance(performance, metrics_selected=['train_r2', 'val_cum_pearson'])

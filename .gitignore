@@ -2,6 +2,7 @@
 /data
 /working
 /model
+/playground/shockspeare/image
 
 # User-specific stuff
 .idea/**/workspace.xml
@@ -9,6 +10,10 @@
 .idea/**/usage.statistics.xml
 .idea/**/dictionaries
 .idea/**/shelf
+
+# Python interpreter stuff (diffs on every machine)
+.idea/**/misc.xml
+.idea/**/*.iml
 
 # Generated files
 .idea/**/contentModel.xml

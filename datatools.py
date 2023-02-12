@@ -3,6 +3,7 @@ import numpy as np
 import numpy.matlib
 from sklearn.decomposition import TruncatedSVD, PCA
 from sklearn import metrics
+from pandas import Series, DataFrame
 
 
 def standardize_pd(Xin):
@@ -197,6 +198,54 @@ def data_quantization(pd_data, scale=10):
 
         data_quantile.drop(columns=feature, axis=1, inplace=True)
     return data_quantile, percent_of_zero
+
+
+def extract_market_data(m_df: DataFrame):
+    """
+    Input the market data and extract mean price using close
+    prices, volatility and mean volume
+    :param m_df: [pd.DataFrame] market data, set_index already
+    :return: [pd.DataFrame] extracted features from market data
+    """
+    # sort indexing
+    if m_df.index.names == ['asset', 'day', 'timeslot']:
+        m_df = m_df.swaplevel(0, 1)
+    elif m_df.index.names == ['asset', 'day', 'timeslot']:
+        pass
+    else:
+        raise ValueError('Unsupported index ordering')
+
+    m_df.reset_index(inplace=True)
+    m_df = m_df.sort_values(['day', 'asset', 'timeslot'], ascending=[True, True, True])
+    # convert back to multi_index
+    m_df.set_index(['day', 'asset', 'timeslot'], inplace=True)
+
+    m_df_day = m_df.groupby(level=[0, 1])[['volume', 'money']].sum()
+    # Compute average price
+    m_df_day['avg_price'] = m_df_day['money'] / m_df_day['volume']
+    # find index of zero volume
+    indx_day = m_df_day[m_df_day['volume'] == 0].index
+    # compute replacing value as mean of high and low
+    for (i, indx) in enumerate(indx_day):
+        replace_value = .5 * m_df.loc[indx, 'high'].max() + .5 * m_df.loc[indx, 'low'].min()
+        # m_df.loc[indx, 'open':'low'] = replace_value.item()
+        m_df_day.loc[indx, 'avg_price'] = replace_value.item()
+
+    assert np.size(m_df_day.isna().sum(axis=1).to_numpy().nonzero()[
+                       0]) == 0, "Clean data still contains NaN"
+
+    # Compute volatility
+    T = 50.0  # number of time units
+    # note numpy use 0 dof while pd use 1 dof
+    m_df_day['volatility'] = m_df.groupby(level=[0, 1])['close'].std() * np.sqrt(T)
+
+    # Compute average volume:
+    m_df_day['mean_volume'] = m_df_day['volume'] / T
+
+    # drop unnecessary features:
+    m_df_day = m_df_day.drop(columns=['volume', 'money'])
+
+    return m_df_day
 
 
 if __name__ == "__main__":

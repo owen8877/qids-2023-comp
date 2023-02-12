@@ -2,6 +2,7 @@
 /data
 /working
 /model
+/playground/shockspeare/image
 
 # User-specific stuff
 .idea/**/workspace.xml

@@ -29,6 +29,10 @@ def plot_performance(performance: Iterable[Dict[str, float]], metrics_selected: 
             if (metrics_selected is None) or (k in metrics_selected):
                 metrics[k][i] = v
 
+    if metrics_selected is not None:
+        for i in range(len(metrics_selected)):
+            print('The ending score for metric', metrics_selected[i], 'is: ', metrics[metrics_selected[i]][-1])
+
     if ax is None:
         ax = plt.gca()
     for k, arr in metrics.items():

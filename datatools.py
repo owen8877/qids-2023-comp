@@ -243,6 +243,22 @@ def extract_market_data(m_df: DataFrame):
 
     return m_df_day
 
+def check_dataframe(df, expect_index, expect_feature):
+    """
+    Check if the input DataFrame has the desired index and features
+    :param df[pd.DataFrame]: input dataframe to check
+    :param expect_index[list]: input list for expected indices in df
+    :param expect_feature[list]: input list for expected features in df
+    :return:
+    """
+    if df.index.names != expect_index:
+        raise ValueError('Expecting index as {} but got {}'.format(expect_index, list[df.index.names]))
+    elif (df.columns != expect_feature).any():
+        raise ValueError(f'Expecting feature as {expect_feature} but got {df.columns}')
+    else:
+        pass
+
+
 
 if __name__ == "__main__":
     pass

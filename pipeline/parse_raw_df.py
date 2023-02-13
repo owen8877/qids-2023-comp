@@ -39,7 +39,7 @@ def pre_process_df_with_date(df: DataFrame):
     return p_df.set_index(['day', 'asset']).sort_index()
 
 
-def _dump(is_mini: bool = False, n_days: int = 10):
+def _dump(is_mini: bool = False, n_days: int = 10, path_prefix='..'):
     """
     The actual working file that dumps the dataset file.
 
@@ -47,8 +47,11 @@ def _dump(is_mini: bool = False, n_days: int = 10):
     :param n_days:
     :return:
     """
-    parsed_path = f'../data/parsed_mini/{n_days}' if is_mini else '../data/parsed'
-    raw_path = f'../data/raw_mini/{n_days}' if is_mini else '../data/raw'
+    PARSED_PATH = 'data/parsed'
+    RAW_PATH = 'data/raw'
+
+    parsed_path = f'{path_prefix}/{PARSED_PATH}' + (f'_mini/{n_days}' if is_mini else '')
+    raw_path = f'{path_prefix}/{RAW_PATH}' + (f'_mini/{n_days}' if is_mini else '')
     template = '{}/first_round_train_{}_data.csv'
     try:
         f_df = pre_process_df_with_date(pd.read_csv(template.format(raw_path, 'fundamental')))

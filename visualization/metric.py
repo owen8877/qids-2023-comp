@@ -1,5 +1,6 @@
 from typing import Iterable
 
+import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
 from pandas import DataFrame
@@ -49,7 +50,10 @@ def plot_performance(performance: Performance, metrics_selected: Iterable[str] =
     if metrics_selected is not None:
         for name, values in performance.items():
             if name in metrics_selected:
-                print(f'The ending score for metric {name} is: {values.iloc[-1]:.4e}')
+                i = 1
+                while np.isnan(values.iloc[-i]):
+                    i += 1
+                print(f'The ending score for metric {name} is: {values.iloc[-i]:.4e}')
 
     if ax is None:
         ax = plt.gca()

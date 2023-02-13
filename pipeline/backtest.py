@@ -56,33 +56,46 @@ def cross_validation(training: ModelLike, feature_columns: Union[List[str], Tupl
     if len(days) < n_splits:
         print('Warning: number of splits is larger than days available in the training set.')
     tscv = TimeSeriesSplit(n_splits=min(n_splits, len(days)))
-    iterator = tqdm(tscv.split(days), total=tscv.n_splits)
+    pbar = tqdm(tscv.split(days), total=tscv.n_splits)
     cum_y_val_true = Series(dtype=float)
     cum_y_val_prediction = Series(dtype=float)
     performance = Performance()
 
-    for fold, (train, val) in enumerate(iterator):
+    for fold, (train, val) in enumerate(pbar):
         # X, _ = data_quantization(df[original_feature])
 
         days_train = days[train]
+        days_val = days[val]
+        if len(days_train) < 2:
+            print('Skipping this fold since we cannot truncate the last day.')
+            continue
         if (lookback_window is not None) and (len(days_train) > lookback_window):
-            days_train = days_train[-lookback_window:]
-        X_train, y_train_true = df.loc[(days_train,), :][feature_columns], df.loc[(days_train,), :][return_column]
+            days_train_valid = days_train[-lookback_window-1:-1]
+        else:
+            days_train_valid = days_train[:-1]
+
+        X_train, y_train_true = df.loc[(days_train_valid,), :][feature_columns], df.loc[(days_train_valid,), :][return_column]
         model = training(X_train, y_train_true)
         y_train_prediction = Series(model.predict(X_train), index=y_train_true.index)
 
-        days_val = days[val]
         X_val, y_val_true = df.loc[(days_val,), :][feature_columns], df.loc[(days_val,), :][return_column]
         y_val_prediction = Series(model.predict(X_val), index=y_val_true.index)
 
         cum_y_val_true = pd.concat([cum_y_val_true, y_val_true])
         cum_y_val_prediction = pd.concat([cum_y_val_prediction, y_val_prediction])
 
-        performance[fold, 'train_r2'] = r2_score(y_train_true, y_train_prediction)
-        performance[fold, 'val_r2'] = r2_score(y_val_true, y_val_prediction)
-        performance[fold, 'val_pearson'] = y_val_true.corr(y_val_prediction)
-        performance[fold, 'val_cum_r2'] = r2_score(cum_y_val_true, cum_y_val_prediction)
-        performance[fold, 'val_cum_pearson'] = cum_y_val_true.corr(cum_y_val_prediction)
+        train_r2 = r2_score(y_train_true, y_train_prediction)
+        performance[fold, 'train_r2'] = train_r2
+        val_r2 = r2_score(y_val_true, y_val_prediction)
+        performance[fold, 'val_r2'] = val_r2
+        val_pearson = y_val_true.corr(y_val_prediction)
+        performance[fold, 'val_pearson'] = val_pearson
+        val_cum_r2 = r2_score(cum_y_val_true, cum_y_val_prediction)
+        performance[fold, 'val_cum_r2'] = val_cum_r2
+        val_cum_pearson = cum_y_val_true.corr(cum_y_val_prediction)
+        performance[fold, 'val_cum_pearson'] = val_cum_pearson
+
+        pbar.set_description(f'Fold {fold}, val_cum_r2={val_cum_r2:.4f}, val_cum_pearson={val_cum_pearson:.4f}')
 
     return performance
 
@@ -165,13 +178,13 @@ def evaluation_for_submission(model: SupportsPredict, feature_columns: Iterable[
             cum_daily_close = pd.concat([cum_daily_close, current_close])
             cum_df = pd.concat([cum_df, current_slice])
 
-        before2_return = Series(
+        ret_n2_true = Series(
             data=(cum_daily_close.loc[(current_day,)].values / cum_daily_close.loc[(before2_day,)].values) - 1,
             index=MultiIndex.from_product([[before2_day], range(N_asset)], names=['day', 'asset']), name='ref_return')
         if pre_allocate:
-            cum_return_true.iloc[(before2_day - 1) * N_asset:before2_day * N_asset] = before2_return
+            cum_return_true.iloc[(before2_day - 1) * N_asset:before2_day * N_asset] = ret_n2_true
         else:
-            cum_return_true = pd.concat([cum_return_true, before2_return])
+            cum_return_true = pd.concat([cum_return_true, ret_n2_true])
 
         if isinstance(model, SupportsPredict):
             train_r2 = 0  # since the model does not require re-train
@@ -208,13 +221,17 @@ def evaluation_for_submission(model: SupportsPredict, feature_columns: Iterable[
 
         performance[current_day, 'train_r2'] = train_r2
         if before2_day > N_train_days:
-            y_pred_2day_before = cum_return_pred.loc[(before2_day,)]
-            performance[before2_day, 'test_r2'] = r2_score(before2_return, y_pred_2day_before)
-            performance[before2_day, 'test_pearson'] = before2_return.corr(y_pred_2day_before)
-            cum_y_val_true_comp = cum_return_true.loc[(range(N_train_days + 1, before1_day),)]
-            cum_y_val_prediction_comp = cum_return_pred.loc[(range(N_train_days + 1, before1_day),)]
-            performance[before2_day, 'test_cum_r2'] = r2_score(cum_y_val_true_comp, cum_y_val_prediction_comp)
-            test_cum_pearson = cum_y_val_true_comp.corr(cum_y_val_prediction_comp)
+            ret_n2_pred = cum_return_pred.loc[(before2_day,)]
+            test_r2 = r2_score(ret_n2_true, ret_n2_pred)
+            performance[before2_day, 'test_r2'] = test_r2
+            test_pearson = ret_n2_true.corr(ret_n2_pred)
+            performance[before2_day, 'test_pearson'] = test_pearson
+
+            cum_true = cum_return_true.loc[(range(N_train_days + 1, before1_day),)]
+            cum_pred = cum_return_pred.loc[(range(N_train_days + 1, before1_day),)]
+            test_cum_r2 = r2_score(cum_true, cum_pred)
+            performance[before2_day, 'test_cum_r2'] = test_cum_r2
+            test_cum_pearson = cum_true.corr(cum_pred)
             performance[before2_day, 'test_cum_pearson'] = test_cum_pearson
 
             pbar.set_description(f'Day {current_day}, test cum pearson {test_cum_pearson:.4f}')

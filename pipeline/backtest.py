@@ -81,6 +81,7 @@ def cross_validation(training: ModelLike, feature_columns: Union[List[str], Tupl
         performance[fold, 'train_r2'] = r2_score(y_train_true, y_train_prediction)
         performance[fold, 'val_r2'] = r2_score(y_val_true, y_val_prediction)
         performance[fold, 'val_pearson'] = y_val_true.corr(y_val_prediction)
+        performance[fold, 'val_cum_r2'] = r2_score(cum_y_val_true, cum_y_val_prediction)
         performance[fold, 'val_cum_pearson'] = cum_y_val_true.corr(cum_y_val_prediction)
 
     return performance
@@ -98,9 +99,9 @@ def nan_dataframe_factory(index, columns) -> DataFrame:
     return DataFrame(data, index, columns, dtype=float)
 
 
-def evaluation_for_submission(model: SupportsPredict, feature_columns: Iterable[str], dataset: Dataset,
-                              df: DataFrame, qids_path_prefix: str = '../',
-                              lookback_window: Union[int, None] = 200, pre_allocate: bool = True) -> Performance:
+def evaluation_for_submission(model: SupportsPredict, feature_columns: Iterable[str], dataset: Dataset, df: DataFrame,
+                              qids: QIDS, lookback_window: Union[int, None] = 200,
+                              pre_allocate: bool = True) -> Performance:
     """
     Evaluate the given model on the test dataset for submission.
     Assuming no additional features except the fundamental data and extracted market data.
@@ -110,6 +111,7 @@ def evaluation_for_submission(model: SupportsPredict, feature_columns: Iterable[
     :param qids_path_prefix:
     :return:
     """
+    # Assuming that the days start from 1; needs to be checked
     _cum_daily_close = dataset.market.reset_index(['day', 'asset']).loc[N_timeslot].set_index(['day', 'asset'])['close']
     _cum_return_true = dataset.ref_return['return'].rename('ref_return')
     if pre_allocate:
@@ -119,15 +121,15 @@ def evaluation_for_submission(model: SupportsPredict, feature_columns: Iterable[
             [range(N_train_days + 1, N_train_days + N_test_days + 1), range(N_asset)], names=['day', 'asset'])
 
         cum_daily_close = nan_series_factory(multi_index_from_day_1, 'close')
-        cum_daily_close.loc[_cum_daily_close.index] = _cum_daily_close
+        cum_daily_close.iloc[:len(_cum_daily_close)] = _cum_daily_close
 
         cum_return_true = nan_series_factory(multi_index_from_day_1, 'ref_return')
-        cum_return_true.loc[_cum_return_true.index] = _cum_return_true
+        cum_return_true.iloc[:len(_cum_return_true)] = _cum_return_true
 
         cum_return_pred = nan_series_factory(multi_index_from_testing, 'pred_return')
 
         cum_df = nan_dataframe_factory(multi_index_from_day_1, df.columns)
-        cum_df.loc[df.index, :] = df.values
+        cum_df.iloc[:len(df), :] = df
     else:
         cum_daily_close = _cum_daily_close.copy()
         cum_return_true = _cum_return_true.copy()
@@ -138,7 +140,7 @@ def evaluation_for_submission(model: SupportsPredict, feature_columns: Iterable[
         cum_df = df.copy()
 
     performance = Performance()
-    env = QIDS(path_prefix=qids_path_prefix)
+    env = qids.make_env()
     pbar = trange(N_train_days + 1, N_train_days + N_test_days + 1)
     pbar_iter = iter(pbar)
 
@@ -157,8 +159,8 @@ def evaluation_for_submission(model: SupportsPredict, feature_columns: Iterable[
         current_close = m_current_slice.loc[(current_day, range(N_asset), N_timeslot), 'close'].reset_index('timeslot',
                                                                                                             drop=True)
         if pre_allocate:
-            cum_daily_close.loc[(current_day,)] = current_close
-            cum_df.loc[(current_day,)] = current_slice
+            cum_daily_close.iloc[(current_day - 1) * N_asset:current_day * N_asset] = current_close
+            cum_df.iloc[(current_day - 1) * N_asset:current_day * N_asset, :] = current_slice
         else:
             cum_daily_close = pd.concat([cum_daily_close, current_close])
             cum_df = pd.concat([cum_df, current_slice])
@@ -167,7 +169,7 @@ def evaluation_for_submission(model: SupportsPredict, feature_columns: Iterable[
             data=(cum_daily_close.loc[(current_day,)].values / cum_daily_close.loc[(before2_day,)].values) - 1,
             index=MultiIndex.from_product([[before2_day], range(N_asset)], names=['day', 'asset']), name='ref_return')
         if pre_allocate:
-            cum_return_true.loc[(before2_day,)] = before2_return
+            cum_return_true.iloc[(before2_day - 1) * N_asset:before2_day * N_asset] = before2_return
         else:
             cum_return_true = pd.concat([cum_return_true, before2_return])
 
@@ -185,8 +187,9 @@ def evaluation_for_submission(model: SupportsPredict, feature_columns: Iterable[
             # First, train the model on what we already have
             train_start_date = max(1, before1_day - lookback_window) if lookback_window is not None else 1
             sub_cum_df = cum_df.loc[(range(train_start_date, current_day + 1),), :]
-            additional_features, _ = data_quantization(sub_cum_df)
-            all_features = pd.concat([sub_cum_df, additional_features], axis=1)
+            # additional_features, _ = data_quantization(sub_cum_df)
+            all_features = sub_cum_df
+            # all_features = pd.concat([sub_cum_df, additional_features], axis=1)
             feature_to_last_day = all_features.loc[(range(train_start_date, before1_day),), feature_columns]
             target_to_last_day = cum_return_true.loc[(range(train_start_date, before1_day),)]
             model_obj = model(feature_to_last_day, target_to_last_day)
@@ -198,7 +201,8 @@ def evaluation_for_submission(model: SupportsPredict, feature_columns: Iterable[
             env.input_prediction(current_prediction)
 
         if pre_allocate:
-            cum_return_pred.loc[(current_day,)] = current_prediction
+            cum_return_pred.iloc[
+            (current_day - 1 - N_train_days) * N_asset:(current_day - N_train_days) * N_asset] = current_prediction
         else:
             cum_return_pred = pd.concat([cum_return_pred, current_prediction])
 
@@ -267,12 +271,13 @@ class Test(TestCase):
             reg = LinearRegression().fit(X, y)
             return reg
 
-        q_df, _ = data_quantization(dataset.fundamental)
-        full_df = pd.concat([q_df, dataset.ref_return], axis=1).dropna()
-        model = linear_model(full_df[f_quantile_feature], full_df['return'])
+        # q_df, _ = data_quantization(dataset.fundamental)
+        # full_df = pd.concat([q_df, dataset.ref_return], axis=1).dropna()
+        # model = linear_model(full_df[f_quantile_feature], full_df['return'])
 
-        performance = evaluation_for_submission(model, f_quantile_feature, dataset=dataset, df=df,
-                                                lookback_window=None)
+        qids = QIDS(path_prefix='../')
+        performance = evaluation_for_submission(linear_model, feature, dataset=dataset, df=df, qids=qids,
+                                                lookback_window=200)
 
         plt.figure()
         plot_performance(performance, metrics_selected=['train_r2', 'test_cum_r2', 'test_cum_pearson'])

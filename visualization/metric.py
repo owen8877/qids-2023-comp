@@ -54,7 +54,7 @@ def plot_performance(performance: Performance, metrics_selected: Iterable[str] =
     if ax is None:
         ax = plt.gca()
     for name, values in performance.items():
-        if name in metrics_selected:
+        if metrics_selected is None or name in metrics_selected:
             ax.plot(values.index, values, label=name)
     ax.legend(loc='best')
     ax.set(xlabel='index of fold', ylabel='metric', ylim=[-0.05, 0.1])

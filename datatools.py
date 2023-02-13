@@ -242,9 +242,10 @@ def extract_market_data(m_df: DataFrame):
     m_df_day = m_df_day.drop(columns=['volume', 'money'])
 
     # Daily return that compares the first open and the last close
-    m_df_day['daily_return'] = m_df.reset_index(level=[0, 1]).groupby(by=['day', 'asset']).apply(
-        lambda df: df.loc[50, 'close'] / df.loc[1, 'open'] - 1).rename('daily_return')
-
+    price_groupby = m_df.reset_index(level=[0, 1]).groupby(by=['day', 'asset'])
+    close_price = price_groupby['close'].take([49]).reset_index('timeslot', drop=True).rename('daily_return')
+    open_price = price_groupby['open'].take([0]).reset_index('timeslot', drop=True).rename('daily_return')
+    m_df_day['daily_return'] = close_price / open_price - 1
     return m_df_day
 
 

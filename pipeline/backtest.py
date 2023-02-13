@@ -250,7 +250,7 @@ class Test(TestCase):
         from datatools import data_quantization
         from pipeline import load_mini_dataset
 
-        dataset = load_mini_dataset('../data/parsed_mini', 10)
+        dataset = load_mini_dataset('data/parsed_mini', 10, path_prefix='..')
         quantized_fundamental, _ = data_quantization(dataset.fundamental)
         df = pd.concat([quantized_fundamental, dataset.fundamental, dataset.ref_return], axis=1).dropna()
         quantile_feature = ['turnoverRatio_QUANTILE', 'transactionAmount_QUANTILE', 'pb_QUANTILE', 'ps_QUANTILE',

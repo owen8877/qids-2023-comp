@@ -67,14 +67,14 @@ def generate_mini_csv(n_days: int = 10):
         raise e
 
 
-def load_mini_dataset(parent_path: str = 'data/parsed_mini', n_days: int = 10):
-    market_path = f'{parent_path}/{n_days}/market.feather'
-    fundamental_path = f'{parent_path}/{n_days}/fundamental.feather'
-    ref_return_path = f'{parent_path}/{n_days}/ref_return.feather'
+def load_mini_dataset(parent_path: str = 'data/parsed_mini', n_days: int = 10, path_prefix='.'):
+    market_path = f'{path_prefix}/{parent_path}/{n_days}/market.feather'
+    fundamental_path = f'{path_prefix}/{parent_path}/{n_days}/fundamental.feather'
+    ref_return_path = f'{path_prefix}/{parent_path}/{n_days}/ref_return.feather'
     if not Path(market_path).exists():
         print(f'Warning: could not find mini market data at `{market_path}`, trying to run the pipleline.')
         generate_mini_csv(n_days)
-        parse_raw_df._dump(is_mini=True, n_days=n_days)
+        parse_raw_df._dump(is_mini=True, n_days=n_days, path_prefix=path_prefix)
 
     market = pd.read_feather(market_path).set_index(['day', 'asset', 'timeslot']).sort_index()
     fundamental = pd.read_feather(fundamental_path).set_index(['day', 'asset']).sort_index()

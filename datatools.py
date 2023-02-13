@@ -1,9 +1,9 @@
-import pandas as pd
+from unittest import TestCase
+
 import numpy as np
-import numpy.matlib
-from sklearn.decomposition import TruncatedSVD, PCA
-from sklearn import metrics
-from pandas import Series, DataFrame
+import pandas as pd
+from pandas import DataFrame
+from sklearn.decomposition import TruncatedSVD
 
 
 def standardize_pd(Xin):
@@ -203,7 +203,7 @@ def data_quantization(pd_data, scale=10):
 def extract_market_data(m_df: DataFrame):
     """
     Input the market data and extract mean price using close
-    prices, volatility and mean volume
+    prices, volatility, daily return and mean volume
     :param m_df: [pd.DataFrame] market data, set_index already
     :return: [pd.DataFrame] extracted features from market data
     """
@@ -241,8 +241,23 @@ def extract_market_data(m_df: DataFrame):
     # drop unnecessary features:
     m_df_day = m_df_day.drop(columns=['volume', 'money'])
 
+    # Daily return that compares the first open and the last close
+    m_df_day['daily_return'] = m_df.reset_index(level=[0, 1]).groupby(by=['day', 'asset']).apply(
+        lambda df: df.loc[50, 'close'] / df.loc[1, 'open'] - 1).rename('daily_return')
+
     return m_df_day
 
 
 if __name__ == "__main__":
     pass
+
+
+class Test(TestCase):
+    def test_extract_market_data(self):
+        from pipeline import load_mini_dataset
+
+        dataset = load_mini_dataset('data/parsed_mini', 10, path_prefix='.')
+        market_intraday = extract_market_data(dataset.market)
+
+        self.assertEqual(market_intraday.index.names, ['day', 'asset'])
+        self.assertEqual(sorted(market_intraday.columns), ['avg_price', 'daily_return', 'mean_volume', 'volatility'])

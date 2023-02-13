@@ -1,5 +1,5 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="Python tests for backtest.Test.test_cross_validation" type="tests" factoryName="Autodetect" nameIsGenerated="true">
+  <configuration default="false" name="CV suite example" type="tests" factoryName="Autodetect">
     <module name="qids-2023-comp" />
     <option name="INTERPRETER_OPTIONS" value="" />
     <option name="PARENT_ENVS" value="true" />

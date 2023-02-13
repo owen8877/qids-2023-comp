@@ -56,11 +56,11 @@ def generate_mini_csv(n_days: int = 10):
     template = '{}/first_round_train_{}_data.csv'
     try:
         pd.read_csv(template.format(full_path, 'fundamental')).iloc[:N_asset * n_days, :].to_csv(
-            template.format(mini_path, 'fundamental'))
+            template.format(mini_path, 'fundamental'), index=False)
         pd.read_csv(template.format(full_path, 'market')).iloc[:N_asset * N_timeslot * n_days, :].to_csv(
-            template.format(mini_path, 'market'))
+            template.format(mini_path, 'market'), index=False)
         pd.read_csv(template.format(full_path, 'return')).iloc[:N_asset * n_days, :].to_csv(
-            template.format(mini_path, 'return'))
+            template.format(mini_path, 'return'), index=False)
     except FileNotFoundError as e:
         print('csv raw data not found! make sure that the training fundamental/market/return data '
               'is under the @/data/raw folder')

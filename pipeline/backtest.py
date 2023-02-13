@@ -1,5 +1,6 @@
 from abc import abstractmethod
-from typing import Union, Tuple, List, Callable, Any, Iterable, runtime_checkable, Protocol
+from typing import Union, Tuple, List, Callable, Iterable
+from typing import runtime_checkable, Protocol  # ERASE_MAGIC
 from unittest import TestCase
 
 import numpy as np
@@ -13,20 +14,20 @@ from datatools import extract_market_data, data_quantization
 from pipeline import Dataset, N_train_days, N_asset, N_timeslot, N_test_days
 from pipeline.parse_raw_df import pre_process_df_with_date_time, pre_process_df_with_date
 from qids_lib import QIDS
-from visualize.metric import Performance
+from visualization.metric import Performance
 
 
-@runtime_checkable
-class SupportsPredict(Protocol):
-    """An ABC with one abstract method `predict`."""
-    __slots__ = ()
+@runtime_checkable  # ERASE_MAGIC
+class SupportsPredict(Protocol):  # ERASE_MAGIC
+    """An ABC with one abstract method `predict`. # ERASE_MAGIC"""
+    __slots__ = ()  # ERASE_MAGIC
 
-    @abstractmethod
-    def predict(self, X: DataFrame) -> Series:
-        pass
+    @abstractmethod  # ERASE_MAGIC
+    def predict(self, X: DataFrame) -> Series:  # ERASE_MAGIC
+        pass  # ERASE_MAGIC
 
 
-ModelLike = Union[Callable[[DataFrame, Series], SupportsPredict], SupportsPredict]
+ModelLike = Union[Callable[[DataFrame, Series], SupportsPredict], SupportsPredict]  # ERASE_MAGIC
 
 
 def cross_validation(training: ModelLike, feature_columns: Union[List[str], Tuple[str]], df: DataFrame = None,
@@ -223,7 +224,7 @@ class Test(TestCase):
         A minimalist set-up to show how to use the backtest cross-validation suite.
         """
         from sklearn.linear_model import LinearRegression
-        from visualize.metric import plot_performance
+        from visualization.metric import plot_performance
         from matplotlib import pyplot as plt
         from datatools import data_quantization
         from pipeline import load_mini_dataset
@@ -250,7 +251,7 @@ class Test(TestCase):
         A minimalist set-up to show how to use the evalution and submission suite.
         """
         from sklearn.linear_model import LinearRegression
-        from visualize.metric import plot_performance
+        from visualization.metric import plot_performance
         from matplotlib import pyplot as plt
         from pipeline import Dataset
 

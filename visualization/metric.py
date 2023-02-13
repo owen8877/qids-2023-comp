@@ -1,7 +1,5 @@
-from collections import defaultdict
-from typing import Iterable, Dict, Tuple
+from typing import Iterable
 
-import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
 from pandas import DataFrame

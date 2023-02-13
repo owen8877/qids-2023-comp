@@ -1,7 +1,8 @@
 /misc
 /data
 /working
-/model
+export
+dump
 /playground/shockspeare/image
 
 # User-specific stuff

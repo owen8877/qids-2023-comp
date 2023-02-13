@@ -225,8 +225,7 @@ def extract_market_data(m_df: DataFrame):
     # compute replacing value as mean of high and low
     for (i, indx) in enumerate(indx_day):
         replace_value = .5 * m_df.loc[indx, 'high'].max() + .5 * m_df.loc[indx, 'low'].min()
-        # m_df.loc[indx, 'open':'low'] = replace_value.item()
-        m_df_day.loc[indx, 'avg_price'] = replace_value#.item()
+        m_df_day.loc[indx, 'avg_price'] = replace_value
 
     assert np.size(m_df_day.isna().sum(axis=1).to_numpy().nonzero()[
                        0]) == 0, "Clean data still contains NaN"

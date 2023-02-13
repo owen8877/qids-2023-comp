@@ -210,15 +210,12 @@ def extract_market_data(m_df: DataFrame):
     # sort indexing
     if m_df.index.names == ['asset', 'day', 'timeslot']:
         m_df = m_df.swaplevel(0, 1)
-    elif m_df.index.names == ['asset', 'day', 'timeslot']:
+    elif m_df.index.names == ['day', 'asset', 'timeslot']:
         pass
     else:
         raise ValueError('Unsupported index ordering')
 
-    m_df.reset_index(inplace=True)
-    m_df = m_df.sort_values(['day', 'asset', 'timeslot'], ascending=[True, True, True])
-    # convert back to multi_index
-    m_df.set_index(['day', 'asset', 'timeslot'], inplace=True)
+    m_df.sort_index(ascending=True, inplace=True)
 
     m_df_day = m_df.groupby(level=[0, 1])[['volume', 'money']].sum()
     # Compute average price
@@ -228,8 +225,7 @@ def extract_market_data(m_df: DataFrame):
     # compute replacing value as mean of high and low
     for (i, indx) in enumerate(indx_day):
         replace_value = .5 * m_df.loc[indx, 'high'].max() + .5 * m_df.loc[indx, 'low'].min()
-        # m_df.loc[indx, 'open':'low'] = replace_value.item()
-        m_df_day.loc[indx, 'avg_price'] = replace_value.item()
+        m_df_day.loc[indx, 'avg_price'] = replace_value
 
     assert np.size(m_df_day.isna().sum(axis=1).to_numpy().nonzero()[
                        0]) == 0, "Clean data still contains NaN"

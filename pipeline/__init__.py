@@ -9,6 +9,8 @@ from util import ensure_dir
 
 N_asset = 54
 N_timeslot = 50
+N_train_days = 1000
+N_test_days = 700
 
 
 class Dataset:

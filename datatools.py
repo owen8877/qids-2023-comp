@@ -1,10 +1,9 @@
 import pandas as pd
 import numpy as np
-import numpy.matlib
 from sklearn.decomposition import TruncatedSVD, PCA
 from sklearn import metrics
 from pandas import Series, DataFrame
-
+from unittest import TestCase
 
 def standardize_pd(Xin):
     """
@@ -242,6 +241,45 @@ def extract_market_data(m_df: DataFrame):
     m_df_day = m_df_day.drop(columns=['volume', 'money'])
 
     return m_df_day
+
+def check_dataframe(df, expect_index=None, expect_feature=None):
+    """
+    Check if the input DataFrame contains NaN, and check the desired index and features if provided
+    :param df[pd.DataFrame]: input dataframe to check
+    :param expect_index[list]: input list for expected indices in df
+    :param expect_feature[list]: input list for expected features in df
+    :return:
+    """
+    if expect_index is not None and df.index.names != expect_index:
+        raise ValueError('Expecting index as {} but got {}'.format(expect_index, list[df.index.names]))
+    else:
+        print('Indices matched')
+
+    if expect_feature is not None and (df.columns != expect_feature).any():
+        raise ValueError(f'Expecting feature as {expect_feature} but got {df.columns}')
+    else:
+        print('Features matched')
+
+    if df.isnull().values.any():
+        raise ValueError('DataFrame still contains NaN')
+
+    print('DataFame is all good for the tests')
+
+class Test(TestCase):
+    def test_checkdata(self):
+        from datatools import data_quantization
+        from pipeline import load_mini_dataset
+
+        dataset = load_mini_dataset('./data/parsed_mini', 10)
+        quantized_fundamental, _ = data_quantization(dataset.fundamental)
+        df = pd.concat([quantized_fundamental, dataset.fundamental, dataset.ref_return], axis=1).dropna()
+        quantile_feature = ['turnoverRatio_QUANTILE', 'transactionAmount_QUANTILE', 'pb_QUANTILE', 'ps_QUANTILE',
+                            'pe_ttm_QUANTILE', 'pe_QUANTILE', 'pcf_QUANTILE']
+        original_feature = ['turnoverRatio', 'transactionAmount', 'pb', 'ps', 'pe_ttm', 'pe', 'pcf']
+        quantile_feature.extend(original_feature)
+        quantile_feature.append('return')
+        check_dataframe(df, expect_index=['day','asset'], expect_feature=df.columns)
+        check_dataframe(df, expect_index=['day','asset'], expect_feature=quantile_feature)
 
 
 if __name__ == "__main__":

@@ -1,10 +1,9 @@
-from unittest import TestCase
-
-import numpy as np
 import pandas as pd
-from pandas import DataFrame
-from sklearn.decomposition import TruncatedSVD
-
+import numpy as np
+from sklearn.decomposition import TruncatedSVD, PCA
+from sklearn import metrics
+from pandas import Series, DataFrame
+from unittest import TestCase
 
 def standardize_pd(Xin):
     """
@@ -203,7 +202,7 @@ def data_quantization(pd_data, scale=10):
 def extract_market_data(m_df: DataFrame):
     """
     Input the market data and extract mean price using close
-    prices, volatility, daily return and mean volume
+    prices, volatility and mean volume
     :param m_df: [pd.DataFrame] market data, set_index already
     :return: [pd.DataFrame] extracted features from market data
     """
@@ -241,24 +240,47 @@ def extract_market_data(m_df: DataFrame):
     # drop unnecessary features:
     m_df_day = m_df_day.drop(columns=['volume', 'money'])
 
-    # Daily return that compares the first open and the last close
-    price_groupby = m_df.reset_index(level=[0, 1]).groupby(by=['day', 'asset'])
-    close_price = price_groupby['close'].take([49]).reset_index('timeslot', drop=True).rename('daily_return')
-    open_price = price_groupby['open'].take([0]).reset_index('timeslot', drop=True).rename('daily_return')
-    m_df_day['daily_return'] = close_price / open_price - 1
     return m_df_day
+
+def check_dataframe(df, expect_index=None, expect_feature=None):
+    """
+    Check if the input DataFrame contains NaN, and check the desired index and features if provided
+    :param df[pd.DataFrame]: input dataframe to check
+    :param expect_index[list]: input list for expected indices in df
+    :param expect_feature[list]: input list for expected features in df
+    :return:
+    """
+    if expect_index is not None and df.index.names != expect_index:
+        raise ValueError('Expecting index as {} but got {}'.format(expect_index, list[df.index.names]))
+    else:
+        print('Indices matched')
+
+    if expect_feature is not None and (df.columns != expect_feature).any():
+        raise ValueError(f'Expecting feature as {expect_feature} but got {df.columns}')
+    else:
+        print('Features matched')
+
+    if df.isnull().values.any():
+        raise ValueError('DataFrame still contains NaN')
+
+    print('DataFame is all good for the tests')
+
+class Test(TestCase):
+    def test_checkdata(self):
+        from datatools import data_quantization
+        from pipeline import load_mini_dataset
+
+        dataset = load_mini_dataset('./data/parsed_mini', 10)
+        quantized_fundamental, _ = data_quantization(dataset.fundamental)
+        df = pd.concat([quantized_fundamental, dataset.fundamental, dataset.ref_return], axis=1).dropna()
+        quantile_feature = ['turnoverRatio_QUANTILE', 'transactionAmount_QUANTILE', 'pb_QUANTILE', 'ps_QUANTILE',
+                            'pe_ttm_QUANTILE', 'pe_QUANTILE', 'pcf_QUANTILE']
+        original_feature = ['turnoverRatio', 'transactionAmount', 'pb', 'ps', 'pe_ttm', 'pe', 'pcf']
+        quantile_feature.extend(original_feature)
+        quantile_feature.append('return')
+        check_dataframe(df, expect_index=['day','asset'], expect_feature=df.columns)
+        check_dataframe(df, expect_index=['day','asset'], expect_feature=quantile_feature)
 
 
 if __name__ == "__main__":
     pass
-
-
-class Test(TestCase):
-    def test_extract_market_data(self):
-        from pipeline import load_mini_dataset
-
-        dataset = load_mini_dataset('data/parsed_mini', 10, path_prefix='.')
-        market_intraday = extract_market_data(dataset.market)
-
-        self.assertEqual(market_intraday.index.names, ['day', 'asset'])
-        self.assertEqual(sorted(market_intraday.columns), ['avg_price', 'daily_return', 'mean_volume', 'volatility'])

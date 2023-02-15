@@ -75,11 +75,14 @@ def cross_validation(training: ModelLike, feature_columns: Union[List[str], Tupl
             days_train_valid = days_train[:-1]
 
         X_train, y_train_true = df.loc[(days_train_valid,), :][feature_columns], df.loc[(days_train_valid,), :][return_column]
-        model = training(X_train, y_train_true)
-        y_train_prediction = Series(model.predict(X_train), index=y_train_true.index)
-
         X_val, y_val_true = df.loc[(days_val,), :][feature_columns], df.loc[(days_val,), :][return_column]
-        y_val_prediction = Series(model.predict(X_val), index=y_val_true.index)
+        if isinstance(training, SupportsPredict):
+            y_train_prediction = Series(training.predict(X_train), index=y_train_true.index)
+            y_val_prediction = Series(training.predict(X_val), index=y_val_true.index)
+        else:
+            model = training(X_train, y_train_true)
+            y_train_prediction = Series(model.predict(X_train), index=y_train_true.index)
+            y_val_prediction = Series(model.predict(X_val), index=y_val_true.index)
 
         cum_y_val_true = pd.concat([cum_y_val_true, y_val_true])
         cum_y_val_prediction = pd.concat([cum_y_val_prediction, y_val_prediction])

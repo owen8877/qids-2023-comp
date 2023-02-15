@@ -43,38 +43,38 @@ class Dataset:
             raise e
 
 
-def generate_mini_csv(n_days: int = 10):
+def generate_mini_csv(n_days: int = 10, path_prefix:str='..'):
     """
     Generate a mini dataset (usually consisting 10 days) that is useful for unittesting.
 
     :param n_days:
     :return:
     """
-    mini_path = f'../data/raw_mini/{n_days}'
-    full_path = f'../data/raw'
+    mini_path = f'{path_prefix}/data/raw_mini/{n_days}'
+    full_path = f'{path_prefix}/data/raw'
     ensure_dir(mini_path)
     template = '{}/first_round_train_{}_data.csv'
     try:
         pd.read_csv(template.format(full_path, 'fundamental')).iloc[:N_asset * n_days, :].to_csv(
-            template.format(mini_path, 'fundamental'))
+            template.format(mini_path, 'fundamental'), index=False)
         pd.read_csv(template.format(full_path, 'market')).iloc[:N_asset * N_timeslot * n_days, :].to_csv(
-            template.format(mini_path, 'market'))
+            template.format(mini_path, 'market'), index=False)
         pd.read_csv(template.format(full_path, 'return')).iloc[:N_asset * n_days, :].to_csv(
-            template.format(mini_path, 'return'))
+            template.format(mini_path, 'return'), index=False)
     except FileNotFoundError as e:
         print('csv raw data not found! make sure that the training fundamental/market/return data '
               'is under the @/data/raw folder')
         raise e
 
 
-def load_mini_dataset(parent_path: str = 'data/parsed_mini', n_days: int = 10):
-    market_path = f'{parent_path}/{n_days}/market.feather'
-    fundamental_path = f'{parent_path}/{n_days}/fundamental.feather'
-    ref_return_path = f'{parent_path}/{n_days}/ref_return.feather'
+def load_mini_dataset(parent_path: str = 'data/parsed_mini', n_days: int = 10, path_prefix='.'):
+    market_path = f'{path_prefix}/{parent_path}/{n_days}/market.feather'
+    fundamental_path = f'{path_prefix}/{parent_path}/{n_days}/fundamental.feather'
+    ref_return_path = f'{path_prefix}/{parent_path}/{n_days}/ref_return.feather'
     if not Path(market_path).exists():
         print(f'Warning: could not find mini market data at `{market_path}`, trying to run the pipleline.')
-        generate_mini_csv(n_days)
-        parse_raw_df._dump(is_mini=True, n_days=n_days)
+        generate_mini_csv(n_days, path_prefix)
+        parse_raw_df._dump(is_mini=True, n_days=n_days, path_prefix=path_prefix)
 
     market = pd.read_feather(market_path).set_index(['day', 'asset', 'timeslot']).sort_index()
     fundamental = pd.read_feather(fundamental_path).set_index(['day', 'asset']).sort_index()

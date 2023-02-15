@@ -27,16 +27,17 @@ class SupportsPredict(Protocol):  # ERASE_MAGIC
         pass  # ERASE_MAGIC
 
 
-ModelLike = Union[Callable[[DataFrame, Series], SupportsPredict], SupportsPredict]  # ERASE_MAGIC
+ModelGenerator = Callable[[DataFrame, Series], SupportsPredict]  # ERASE_MAGIC
+ModelLike = Union[ModelGenerator, SupportsPredict]  # ERASE_MAGIC
 
 
-def cross_validation(training: ModelLike, feature_columns: Union[List[str], Tuple[str]], df: DataFrame = None,
+def cross_validation(training: ModelGenerator, feature_columns: Union[List[str], Tuple[str]], df: DataFrame = None,
                      n_splits: int = 997, return_column: str = 'return', lookback_window: int = None) -> Performance:
     """
     Perform cross validation backtest on the given set of features.
 
     :param training: a function that builds a model based on the input feature/target arguments.
-            Signature: (DataFrame, Series) -> Model (that supports `.predict()` method)
+            Signature: (DataFrame, Series) -> SupportsPredict
     :param feature_columns:
     :param df: the full dataframe containing all necessary data
     :param n_splits: number of splits, 997 by default (since the return data is missing on day 999 and 1000, and we need
@@ -70,19 +71,17 @@ def cross_validation(training: ModelLike, feature_columns: Union[List[str], Tupl
             print('Skipping this fold since we cannot truncate the last day.')
             continue
         if (lookback_window is not None) and (len(days_train) > lookback_window):
-            days_train_valid = days_train[-lookback_window-1:-1]
+            days_train_valid = days_train[-lookback_window - 1:-1]
         else:
             days_train_valid = days_train[:-1]
 
-        X_train, y_train_true = df.loc[(days_train_valid,), :][feature_columns], df.loc[(days_train_valid,), :][return_column]
+        X_train, y_train_true = df.loc[(days_train_valid,), :][feature_columns], df.loc[(days_train_valid,), :][
+            return_column]
+        model = training(X_train, y_train_true)
+        y_train_prediction = Series(model.predict(X_train), index=y_train_true.index)
+
         X_val, y_val_true = df.loc[(days_val,), :][feature_columns], df.loc[(days_val,), :][return_column]
-        if isinstance(training, SupportsPredict):
-            y_train_prediction = Series(training.predict(X_train), index=y_train_true.index)
-            y_val_prediction = Series(training.predict(X_val), index=y_val_true.index)
-        else:
-            model = training(X_train, y_train_true)
-            y_train_prediction = Series(model.predict(X_train), index=y_train_true.index)
-            y_val_prediction = Series(model.predict(X_val), index=y_val_true.index)
+        y_val_prediction = Series(model.predict(X_val), index=y_val_true.index)
 
         cum_y_val_true = pd.concat([cum_y_val_true, y_val_true])
         cum_y_val_prediction = pd.concat([cum_y_val_prediction, y_val_prediction])

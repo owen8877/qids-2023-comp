@@ -104,7 +104,7 @@ def cross_validation(
 
         pbar.set_description(f'Fold {fold}, val_cum_r2={val_cum_r2:.4f}, val_cum_pearson={val_cum_pearson:.4f}')
 
-    cum_y_val_df.index = MultiIndex.from_tuples(cum_y_val_df.index)
+    cum_y_val_df.index = MultiIndex.from_tuples(cum_y_val_df.index, names=['day', 'asset'])
 
     return performance, cum_y_val_df
 

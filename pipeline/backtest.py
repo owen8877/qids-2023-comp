@@ -31,8 +31,10 @@ ModelGenerator = Callable[[DataFrame, Series], SupportsPredict]  # ERASE_MAGIC
 ModelLike = Union[ModelGenerator, SupportsPredict]  # ERASE_MAGIC
 
 
-def cross_validation(training: ModelGenerator, feature_columns: Union[List[str], Tuple[str]], df: DataFrame = None,
-                     n_splits: int = 997, return_column: str = 'return', lookback_window: int = None) -> Performance:
+def cross_validation(
+        training: ModelGenerator, feature_columns: Union[List[str], Tuple[str]], df: DataFrame = None,
+        n_splits: int = 997, return_column: str = 'return', lookback_window: int = None,
+) -> Tuple[Performance, DataFrame]:
     """
     Perform cross validation backtest on the given set of features.
 
@@ -45,6 +47,7 @@ def cross_validation(training: ModelGenerator, feature_columns: Union[List[str],
     :param return_column:
     :param lookback_window: max number of days of the training feature dataframe, `None` means no truncation.
     :return: performance: a dictionary containing the metric evaluation for each fold.
+    :return: cum_y_val_df: a dataframe containing the progressive prediction of y on the validation set and the true values.
     """
     if df is None:
         dataset = Dataset.load(f'{__file__}/../data/parsed')
@@ -58,13 +61,13 @@ def cross_validation(training: ModelGenerator, feature_columns: Union[List[str],
         print('Warning: number of splits is larger than days available in the training set.')
     tscv = TimeSeriesSplit(n_splits=min(n_splits, len(days)))
     pbar = tqdm(tscv.split(days), total=tscv.n_splits)
-    cum_y_val_true = Series(dtype=float)
-    cum_y_val_prediction = Series(dtype=float)
     performance = Performance()
 
-    for fold, (train, val) in enumerate(pbar):
-        # X, _ = data_quantization(df[original_feature])
+    VAL_PRED_LABEL = 'cum_y_val_prediction'
+    VAL_TRUE_LABEL = 'cum_y_val_true'
+    cum_y_val_df = DataFrame(columns=[VAL_PRED_LABEL, VAL_TRUE_LABEL], dtype=float)
 
+    for fold, (train, val) in enumerate(pbar):
         days_train = days[train]
         days_val = days[val]
         if len(days_train) < 2:
@@ -83,8 +86,10 @@ def cross_validation(training: ModelGenerator, feature_columns: Union[List[str],
         X_val, y_val_true = df.loc[(days_val,), :][feature_columns], df.loc[(days_val,), :][return_column]
         y_val_prediction = Series(model.predict(X_val), index=y_val_true.index)
 
-        cum_y_val_true = pd.concat([cum_y_val_true, y_val_true])
-        cum_y_val_prediction = pd.concat([cum_y_val_prediction, y_val_prediction])
+        cum_y_val_df = pd.concat([cum_y_val_df, DataFrame({
+            VAL_PRED_LABEL: y_val_prediction,
+            VAL_TRUE_LABEL: y_val_true,
+        })], axis=0, copy=False)
 
         train_r2 = r2_score(y_train_true, y_train_prediction)
         performance[fold, 'train_r2'] = train_r2
@@ -92,14 +97,16 @@ def cross_validation(training: ModelGenerator, feature_columns: Union[List[str],
         performance[fold, 'val_r2'] = val_r2
         val_pearson = y_val_true.corr(y_val_prediction)
         performance[fold, 'val_pearson'] = val_pearson
-        val_cum_r2 = r2_score(cum_y_val_true, cum_y_val_prediction)
+        val_cum_r2 = r2_score(cum_y_val_df[VAL_TRUE_LABEL], cum_y_val_df[VAL_PRED_LABEL])
         performance[fold, 'val_cum_r2'] = val_cum_r2
-        val_cum_pearson = cum_y_val_true.corr(cum_y_val_prediction)
+        val_cum_pearson = cum_y_val_df[VAL_TRUE_LABEL].corr(cum_y_val_df[VAL_PRED_LABEL])
         performance[fold, 'val_cum_pearson'] = val_cum_pearson
 
         pbar.set_description(f'Fold {fold}, val_cum_r2={val_cum_r2:.4f}, val_cum_pearson={val_cum_pearson:.4f}')
 
-    return performance
+    cum_y_val_df.index = MultiIndex.from_tuples(cum_y_val_df.index)
+
+    return performance, cum_y_val_df
 
 
 def nan_series_factory(index, name) -> Series:
@@ -263,7 +270,8 @@ class Test(TestCase):
             reg = LinearRegression().fit(X, y)
             return reg
 
-        performance = cross_validation(linear_model, quantile_feature, df=df, n_splits=9, lookback_window=5)
+        performance, cum_y_val_df = cross_validation(linear_model, quantile_feature, df=df, n_splits=9,
+                                                     lookback_window=5)
 
         plt.figure()
         plot_performance(performance, metrics_selected=['train_r2', 'val_cum_pearson'])

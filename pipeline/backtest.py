@@ -10,7 +10,7 @@ from sklearn.metrics import r2_score
 from sklearn.model_selection import TimeSeriesSplit
 from tqdm.auto import tqdm, trange
 
-from datatools import extract_market_data, data_quantization
+from datatools import extract_market_data, data_quantization, check_dataframe
 from pipeline import Dataset, N_train_days, N_asset, N_timeslot, N_test_days
 from pipeline.parse_raw_df import pre_process_df_with_date_time, pre_process_df_with_date
 from qids_lib import QIDS
@@ -53,8 +53,7 @@ def cross_validation(
         dataset = Dataset.load(f'{__file__}/../data/parsed')
         df = pd.concat([dataset.fundamental, dataset.ref_return], axis=1).dropna()
 
-    if df.index.names != ['day', 'asset']:  # will be replaced by a generic dataframe checker
-        raise Exception(f'The index level of df should be `[day, asset]`, got {df.index.names} instead!')
+    check_dataframe(df, expect_index=['day', 'asset'], expect_feature=feature_columns + [return_column])
 
     days = df.index.get_level_values('day').unique()
     if len(days) < n_splits:
@@ -133,6 +132,9 @@ def evaluation_for_submission(model: SupportsPredict, feature_columns: Iterable[
     :param qids_path_prefix:
     :return:
     """
+
+    check_dataframe(df, expect_index=['day', 'asset'], expect_feature=feature_columns + [return_column])
+
     # Assuming that the days start from 1; needs to be checked
     _cum_daily_close = dataset.market.reset_index(['day', 'asset']).loc[N_timeslot].set_index(['day', 'asset'])['close']
     _cum_return_true = dataset.ref_return['return'].rename('ref_return')
@@ -205,7 +207,7 @@ def evaluation_for_submission(model: SupportsPredict, feature_columns: Iterable[
                                         index=current_slice.index, name='pred_return')
             assert current_prediction.index.is_monotonic_increasing
             env.input_prediction(current_prediction)
-        else:
+        elif callable(model):
             # First, train the model on what we already have
             train_start_date = max(1, before1_day - lookback_window) if lookback_window is not None else 1
             sub_cum_df = cum_df.loc[(range(train_start_date, current_day + 1),), :]
@@ -221,6 +223,8 @@ def evaluation_for_submission(model: SupportsPredict, feature_columns: Iterable[
                                         index=current_slice.index, name='pred_return')
             assert current_prediction.index.is_monotonic_increasing
             env.input_prediction(current_prediction)
+        else:
+            raise ValueError(f'model={model} needs to be either a ModelGenerator or a SupportsPredict object!')
 
         if pre_allocate:
             cum_return_pred.iloc[

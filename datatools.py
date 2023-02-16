@@ -256,7 +256,7 @@ def extract_market_data(m_df: DataFrame):
     return m_df_day
 
 
-def check_dataframe(df, expect_index=None, expect_feature=None):
+def check_dataframe(df, expect_index=None, expect_feature=None, shutup=False):
     """
     Check if the input DataFrame contains NaN, and check the desired index and features if provided
     :param df[pd.DataFrame]: input dataframe to check
@@ -267,17 +267,19 @@ def check_dataframe(df, expect_index=None, expect_feature=None):
     if expect_index is not None and df.index.names != expect_index:
         raise ValueError('Expecting index as {} but got {}'.format(expect_index, list[df.index.names]))
     else:
-        print('Indices matched')
+        if not shutup:
+            print('Indices matched')
 
     if expect_feature is not None and not set(expect_feature).issubset(set(df.columns)):
         raise ValueError(f'Expecting feature as {expect_feature} but got {df.columns}')
     else:
-        print('Features matched')
+        if not shutup:
+            print('Features matched')
 
     if df.isnull().values.any():
         raise ValueError('DataFrame still contains NaN')
-
-    print('DataFame is all good for the tests')
+    if not shutup:
+        print('DataFame is all good for the tests')
 
 
 def calculate_market_return(

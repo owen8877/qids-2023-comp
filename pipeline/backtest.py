@@ -33,6 +33,7 @@ Strings = Union[List[str], Tuple[str]]
 
 idx = pd.IndexSlice
 
+
 def cross_validation(
         training: ModelGenerator, feature_columns: Strings, df: DataFrame = None,
         n_splits: int = 997, return_column: str = 'return', lookback_window: int = None,
@@ -123,7 +124,13 @@ def nan_dataframe_factory(index, columns) -> DataFrame:
 
 
 class AugmentationOption:
-    def __init__(self, market_return: bool = False, market_return_lookback: int = 5, quantization: bool = False):
+    def __init__(
+            self,
+            return_lookback: int = 2,
+            market_return: bool = False, market_return_lookback: int = 5,
+            quantization: bool = False,
+    ):
+        self.return_lookback = return_lookback
         self.market_return = market_return
         self.market_return_lookback = market_return_lookback
         self.quantization = quantization
@@ -146,10 +153,18 @@ def evaluation_for_submission(model: ModelLike, feature_columns: Strings, datase
     if option is None:
         option = AugmentationOption()
 
-    # data augmentation
+    # Add return data from past few days
+    m_df = extract_market_data(dataset.market)
+    df = pd.concat([df, m_df], axis=1)
+
+    return_0 = df['return_0']
+    return_list = []
+    for i in range(1, option.return_lookback + 1):
+        return_list.append(return_0.groupby(level=1).apply(lambda df: df.shift(i).bfill()).rename(f'return_{i}'))
+    df = pd.concat([df, *return_list], axis=1)
+
+    # Add market return
     if option.market_return:
-        m_df = extract_market_data(dataset.market)
-        df = pd.concat([df, m_df], axis=1)
         market_return_0 = calculate_market_return(m_df)
         market_return_list = [market_return_0]
         for i in range(1, option.market_return_lookback + 1):
@@ -185,7 +200,7 @@ def evaluation_for_submission(model: ModelLike, feature_columns: Strings, datase
         # otherwise the concatenated series contains indices of tuples
         cum_return_pred = Series(dtype=float, name='pred_return',
                                  index=MultiIndex.from_product([[], []], names=['day', 'asset']))
-        # cum_df = df.copy()
+        cum_df = df
 
     last_market_data = dataset.market.loc[([N_train_days],), :]
     performance = Performance()
@@ -212,6 +227,8 @@ def evaluation_for_submission(model: ModelLike, feature_columns: Strings, datase
         if option.market_return:
             for i in range(1, option.market_return_lookback + 1):
                 current_slice[f'market_return_{i}'] = cum_df.loc[(current_day - i, 1), 'market_return_0']
+        for i in range(1, option.return_lookback+1):
+            current_slice[f'return_{i}'] = cum_df.loc[idx[[before1_day], :], f'return_{i-1}'].values
         current_close = m_current_slice.loc[(current_day, range(N_asset), N_timeslot), 'close'].reset_index('timeslot',
                                                                                                             drop=True)
         if pre_allocate:
@@ -251,8 +268,9 @@ def evaluation_for_submission(model: ModelLike, feature_columns: Strings, datase
             model_obj = model(feature_to_last_day, target_to_last_day)
             train_r2 = r2_score(target_to_last_day, model_obj.predict(feature_to_last_day))
 
-            current_prediction = Series(data=model_obj.predict(all_features.loc[idx[[current_day], :], feature_columns]),
-                                        index=current_slice.index, name='pred_return')
+            current_prediction = Series(
+                data=model_obj.predict(all_features.loc[idx[[current_day], :], feature_columns]),
+                index=current_slice.index, name='pred_return')
             assert current_prediction.index.is_monotonic_increasing
             env.input_prediction(current_prediction)
         else:
@@ -320,9 +338,10 @@ class Test(TestCase):
         from sklearn.linear_model import LinearRegression
         from visualization.metric import plot_performance
         from matplotlib import pyplot as plt
-        from pipeline import Dataset
+        from pipeline import Dataset, load_mini_dataset
 
         dataset = Dataset.load('../data/parsed')
+        # dataset = load_mini_dataset(path_prefix='..')
         df = dataset.fundamental
         f_quantile_feature = ['turnoverRatio_QUANTILE', 'transactionAmount_QUANTILE', 'pb_QUANTILE', 'ps_QUANTILE',
                               'pe_ttm_QUANTILE', 'pe_QUANTILE', 'pcf_QUANTILE']
@@ -339,6 +358,7 @@ class Test(TestCase):
         # model = linear_model(full_df[f_quantile_feature], full_df['return'])
 
         qids = QIDS(path_prefix='../')
+        # qids = None
         performance = evaluation_for_submission(
             linear_model, feature, dataset=dataset, df=df, qids=qids, lookback_window=200,
             option=AugmentationOption(market_return=True),

@@ -1,9 +1,13 @@
-import pandas as pd
-import numpy as np
-from sklearn.decomposition import TruncatedSVD, PCA
-from sklearn import metrics
-from pandas import Series, DataFrame
+from typing import Optional
 from unittest import TestCase
+
+import numpy as np
+import pandas as pd
+from pandas import DataFrame, Series
+from sklearn.decomposition import TruncatedSVD
+
+from pipeline import N_timeslot, N_asset
+
 
 def standardize_pd(Xin):
     """
@@ -202,7 +206,7 @@ def data_quantization(pd_data, scale=10):
 def extract_market_data(m_df: DataFrame):
     """
     Input the market data and extract mean price using close
-    prices, volatility and mean volume
+    prices, volatility, daily return and mean volume
     :param m_df: [pd.DataFrame] market data, set_index already
     :return: [pd.DataFrame] extracted features from market data
     """
@@ -240,7 +244,17 @@ def extract_market_data(m_df: DataFrame):
     # drop unnecessary features:
     m_df_day = m_df_day.drop(columns=['volume', 'money'])
 
+    # Daily return that compares the first open and the last close
+    price_groupby = m_df.reset_index(level=[0, 1]).groupby(by=['day', 'asset'])
+    close_price = price_groupby['close'].take([N_timeslot - 1]).reset_index('timeslot', drop=True).rename('return_0')
+    open_price = price_groupby['open'].take([0]).reset_index('timeslot', drop=True).rename('return_0')
+
+    day_1_return = close_price.iloc[:N_asset] / open_price.iloc[:N_asset] - 1
+    remaining_day_return = close_price.iloc[N_asset:] / close_price.shift(N_asset)[N_asset:] - 1
+
+    m_df_day['return_0'] = pd.concat([day_1_return, remaining_day_return])
     return m_df_day
+
 
 def check_dataframe(df, expect_index=None, expect_feature=None):
     """
@@ -255,7 +269,7 @@ def check_dataframe(df, expect_index=None, expect_feature=None):
     else:
         print('Indices matched')
 
-    if expect_feature is not None and (df.columns != expect_feature).any():
+    if expect_feature is not None and not set(expect_feature).issubset(set(df.columns)):
         raise ValueError(f'Expecting feature as {expect_feature} but got {df.columns}')
     else:
         print('Features matched')
@@ -265,9 +279,38 @@ def check_dataframe(df, expect_index=None, expect_feature=None):
 
     print('DataFame is all good for the tests')
 
+
+def calculate_market_return(
+        df: DataFrame, return_0_column: str = 'return_0', weight: Optional[np.ndarray] = None,
+) -> Series:
+    """
+    Calculate the market daily return by combining the return for each asset according to the given weight.
+
+    :param df: Dataframe containing the daily return data.
+    :param return_0_column:
+    :param weight:
+    :return:
+    """
+    check_dataframe(df, expect_index=['day', 'asset'], expect_feature=[return_0_column])
+    if weight is not None:
+        raise ValueError('Currently, only `weight=None` (i.e. simple average) is supported.')
+    else:
+        # Simple return
+        market_return = df.groupby(level=0)[return_0_column].mean()
+
+    return market_return.rename(f'market_{return_0_column}')
+
+
 class Test(TestCase):
+    def test_extract_market(self):
+        from pipeline import load_mini_dataset
+
+        dataset = load_mini_dataset('./data/parsed_mini', 10)
+        m_df = extract_market_data(dataset.market)
+        check_dataframe(m_df, expect_index=['day', 'asset'],
+                        expect_feature=['avg_price', 'volatility', 'mean_volume', 'return_0'])
+
     def test_checkdata(self):
-        from datatools import data_quantization
         from pipeline import load_mini_dataset
 
         dataset = load_mini_dataset('./data/parsed_mini', 10)
@@ -278,8 +321,8 @@ class Test(TestCase):
         original_feature = ['turnoverRatio', 'transactionAmount', 'pb', 'ps', 'pe_ttm', 'pe', 'pcf']
         quantile_feature.extend(original_feature)
         quantile_feature.append('return')
-        check_dataframe(df, expect_index=['day','asset'], expect_feature=df.columns)
-        check_dataframe(df, expect_index=['day','asset'], expect_feature=quantile_feature)
+        check_dataframe(df, expect_index=['day', 'asset'], expect_feature=df.columns)
+        check_dataframe(df, expect_index=['day', 'asset'], expect_feature=quantile_feature)
 
 
 if __name__ == "__main__":

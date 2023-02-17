@@ -256,7 +256,7 @@ def extract_market_data(m_df: DataFrame):
     return m_df_day
 
 
-def check_dataframe(df, expect_index=None, expect_feature=None, shutup=False):
+def check_dataframe(df, expect_index=None, expect_feature=None, shutup=True):
     """
     Check if the input DataFrame contains NaN, and check the desired index and features if provided
     :param df[pd.DataFrame]: input dataframe to check

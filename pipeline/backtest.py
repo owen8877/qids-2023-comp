@@ -137,7 +137,7 @@ class AugmentationOption:
 
 
 def evaluation_for_submission(model: ModelLike, feature_columns: Strings, dataset: Dataset, df: DataFrame,
-                              qids: QIDS, lookback_window: Union[int, None] = 200, option: AugmentationOption = None,
+                              qids: QIDS, lookback_window: Union[int, None] = 200, eval_lookback_window:int=1, option: AugmentationOption = None,
                               pre_allocate: bool = True) -> Performance:
     """
     Evaluate the given model on the test dataset for submission.
@@ -246,35 +246,38 @@ def evaluation_for_submission(model: ModelLike, feature_columns: Strings, datase
         else:
             cum_return_true = pd.concat([cum_return_true, ret_n2_true])
 
-        if isinstance(model, SupportsPredict):
-            train_r2 = 0  # since the model does not require re-train
+        # if isinstance(model, SupportsPredict):
+        #     train_r2 = 0  # since the model does not require re-train
+        #
+        #     additional_features, _ = data_quantization(current_slice)
+        #     all_features = pd.concat([current_slice, additional_features], axis=1)
+        #
+        #     current_prediction = Series(data=model.predict(cum_df.loc[idx[current_day-eval_lookback_window+1:current_day,:], feature_columns]),
+        #                                 index=current_slice.index, name='pred_return')
+        #     assert current_prediction.index.is_monotonic_increasing
+        #     env.input_prediction(current_prediction)
+        # elif hasattr(model_selection, 'fit') and callable(model.fit):
 
-            additional_features, _ = data_quantization(current_slice)
-            all_features = pd.concat([current_slice, additional_features], axis=1)
+        # First, train the model on what we already have
+        train_start_date = max(1, before1_day - lookback_window) if lookback_window is not None else 1
+        sub_cum_df = cum_df.loc[(range(train_start_date, current_day + 1),), :]
+        # additional_features, _ = data_quantization(sub_cum_df)
+        all_features = sub_cum_df
+        # all_features = pd.concat([sub_cum_df, additional_features], axis=1)
+        feature_to_last_day = all_features.loc[(range(train_start_date, before1_day),), feature_columns]
+        target_to_last_day = cum_return_true.loc[(range(train_start_date, before1_day),)]
+        model.fit(feature_to_last_day, target_to_last_day)
+        # train_r2 = r2_score(target_to_last_day, model.predict(feature_to_last_day))
+        # train_r2 = r2_score(target_to_last_day[-54:], model.predict(feature_to_last_day))
 
-            current_prediction = Series(data=model.predict(all_features.loc[(current_day,), feature_columns]),
-                                        index=current_slice.index, name='pred_return')
-            assert current_prediction.index.is_monotonic_increasing
-            env.input_prediction(current_prediction)
-        elif callable(model):
-            # First, train the model on what we already have
-            train_start_date = max(1, before1_day - lookback_window) if lookback_window is not None else 1
-            sub_cum_df = cum_df.loc[(range(train_start_date, current_day + 1),), :]
-            # additional_features, _ = data_quantization(sub_cum_df)
-            all_features = sub_cum_df
-            # all_features = pd.concat([sub_cum_df, additional_features], axis=1)
-            feature_to_last_day = all_features.loc[(range(train_start_date, before1_day),), feature_columns]
-            target_to_last_day = cum_return_true.loc[(range(train_start_date, before1_day),)]
-            model_obj = model(feature_to_last_day, target_to_last_day)
-            train_r2 = r2_score(target_to_last_day, model_obj.predict(feature_to_last_day))
+        current_prediction = Series(
+            data=model.predict(all_features.loc[idx[current_day-eval_lookback_window+1:current_day, :], feature_columns]),
+            index=current_slice.index, name='pred_return')
+        assert current_prediction.index.is_monotonic_increasing
+        env.input_prediction(current_prediction)
 
-            current_prediction = Series(
-                data=model_obj.predict(all_features.loc[idx[[current_day], :], feature_columns]),
-                index=current_slice.index, name='pred_return')
-            assert current_prediction.index.is_monotonic_increasing
-            env.input_prediction(current_prediction)
-        else:
-            raise ValueError(f'model={model} needs to be either a ModelGenerator or a SupportsPredict object!')
+        # else:
+        #     raise ValueError(f'model={model} needs to be either a ModelGenerator or a SupportsPredict object!')
 
         if pre_allocate:
             cum_return_pred.iloc[
@@ -282,7 +285,7 @@ def evaluation_for_submission(model: ModelLike, feature_columns: Strings, datase
         else:
             cum_return_pred = pd.concat([cum_return_pred, current_prediction])
 
-        performance[current_day, 'train_r2'] = train_r2
+        performance[current_day, 'train_r2'] = 0
         if before2_day > N_train_days:
             ret_n2_pred = cum_return_pred.loc[(before2_day,)]
             test_r2 = r2_score(ret_n2_true, ret_n2_pred)

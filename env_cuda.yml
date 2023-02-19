@@ -2,12 +2,12 @@ name: qids-2023-comp
 channels:
   - conda-forge
   - pytorch
+  - nvidia
 dependencies:
   - python>=3.9,<3.10
   - numpy
   - scipy
-  - cpuonly
-  - pytorch>=1.13
+  - pytorch>=1.12
   - pandas
   - matplotlib
   - seaborn
@@ -17,3 +17,5 @@ dependencies:
   - pyarrow
   - mplfinance
   - ipympl
+  - pytorch-cuda>=11.7
+  - cudatoolkit>=11.7

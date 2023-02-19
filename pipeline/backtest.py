@@ -132,9 +132,9 @@ class AugmentationOption:
         self.quantization = quantization
 
 
-def evaluation_for_submission(model: ModelLike, feature_columns: Strings, dataset: Dataset, qids: QIDS,
-                              lookback_window: Union[int, None] = 200, per_eval_lookback: int = 1,
-                              option: AugmentationOption = None, pre_allocate: bool = True) -> Performance:
+def evaluation_for_submission(model: ModelLike, dataset: Dataset, qids: QIDS, lookback_window: Union[int, None] = 200,
+                              per_eval_lookback: int = 1, option: AugmentationOption = None,
+                              pre_allocate: bool = True) -> Performance:
     """
     Evaluate the given model on the test dataset for submission.
     Assuming no additional features except the fundamental data and extracted market data.
@@ -169,7 +169,7 @@ def evaluation_for_submission(model: ModelLike, feature_columns: Strings, datase
         market_returns = pd.concat(market_return_list, axis=1)
         df = df.merge(market_returns, left_on='day', right_index=True)
 
-    check_dataframe(df, expect_index=['day', 'asset'], expect_feature=feature_columns)
+    check_dataframe(df, expect_index=['day', 'asset'])
 
     # Assuming that the days start from 1; needs to be checked
     _cum_daily_close = dataset.market.reset_index(['day', 'asset']).loc[N_timeslot].set_index(['day', 'asset'])['close']
@@ -243,17 +243,19 @@ def evaluation_for_submission(model: ModelLike, feature_columns: Strings, datase
         else:
             cum_return_true = pd.concat([cum_return_true, ret_n2_true])
 
+        last_market_data = m_current_slice
+
         # First, train the model on what we already have
         days_train = np.arange(1 if lookback_window is None else (current_day - per_eval_lookback - lookback_window),
                                before1_day)
 
-        X_train = cum_df.loc[idx[days_train, :], feature_columns]
+        X_train = cum_df.loc[idx[days_train, :], :]
         y_train_true = cum_return_true.loc[idx[days_train[per_eval_lookback - 1:], :]]
         y_train_pred = model.fit_predict(X_train, y_train_true)
         y_train_prediction = Series(y_train_pred, index=y_train_true.index)  # TODO: check shape
         train_r2 = r2_score(y_train_true, y_train_prediction)
 
-        X_eval = cum_df.loc[idx[(current_day + 1 - per_eval_lookback): current_day, :], feature_columns]
+        X_eval = cum_df.loc[idx[(current_day + 1 - per_eval_lookback): current_day, :], :]
         y_eval_prediction = Series(model.predict(X_eval), index=X_eval.index, name='pred_return')
 
         assert y_eval_prediction.index.is_monotonic_increasing
@@ -349,17 +351,23 @@ class Test(TestCase):
         feature = ['turnoverRatio', 'transactionAmount', 'pb', 'ps', 'pe_ttm', 'pe', 'pcf', 'avg_price', 'volatility',
                    'mean_volume']
 
-        def linear_model(X: DataFrame, y: Series) -> SupportsPredict:
-            reg = LinearRegression().fit(X, y)
-            return reg
+        class SimpleLinearModel:
+            def __init__(self, features):
+                self.reg = LinearRegression(fit_intercept=True)
+                self.features = features
 
-        # q_df, _ = data_quantization(dataset.fundamental)
-        # full_df = pd.concat([q_df, dataset.ref_return], axis=1).dropna()
-        # model = linear_model(full_df[f_quantile_feature], full_df['return'])
+            def fit_predict(self, X, y):
+                self.reg.fit(X, y)
+                y_pred = self.reg.predict(X)
+                return y_pred
+
+            def predict(self, X):
+                return self.reg.predict(X)
 
         qids = QIDS(path_prefix='../')
         # qids = None
-        performance = evaluation_for_submission(linear_model, feature, dataset=dataset, qids=qids, lookback_window=200,
+        model = SimpleLinearModel(feature)
+        performance = evaluation_for_submission(model, dataset=dataset, qids=qids, lookback_window=200,
                                                 option=AugmentationOption(market_return=True))
 
         plt.figure()

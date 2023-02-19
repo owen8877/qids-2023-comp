@@ -1,5 +1,5 @@
 from abc import abstractmethod
-from typing import Union, Tuple, List, Callable, Iterable
+from typing import Union, Tuple, List, Callable, Iterable, Optional
 from typing import runtime_checkable, Protocol  # ERASE_MAGIC
 from unittest import TestCase
 
@@ -8,7 +8,7 @@ import pandas as pd
 from pandas import Series, DataFrame, MultiIndex
 from sklearn.metrics import r2_score
 from sklearn.model_selection import TimeSeriesSplit
-from tqdm.auto import tqdm, trange
+from tqdm import tqdm, trange
 
 from datatools import extract_market_data, data_quantization, check_dataframe, calculate_market_return
 from pipeline import Dataset, N_train_days, N_asset, N_timeslot, N_test_days
@@ -18,37 +18,34 @@ from visualization.metric import Performance
 
 
 @runtime_checkable  # ERASE_MAGIC
-class SupportsPredict(Protocol):  # ERASE_MAGIC
+class ModelLike(Protocol):  # ERASE_MAGIC
     """An ABC with one abstract method `predict`. # ERASE_MAGIC"""
     __slots__ = ()  # ERASE_MAGIC
+
+    @abstractmethod  # ERASE_MAGIC
+    def fit_predict(self, X: DataFrame, y: Series) -> Series:  # ERASE_MAGIC
+        pass  # ERASE_MAGIC
 
     @abstractmethod  # ERASE_MAGIC
     def predict(self, X: DataFrame) -> Series:  # ERASE_MAGIC
         pass  # ERASE_MAGIC
 
 
-ModelGenerator = Callable[[DataFrame, Series], SupportsPredict]  # ERASE_MAGIC
-ModelLike = Union[ModelGenerator, SupportsPredict]  # ERASE_MAGIC
 Strings = Union[List[str], Tuple[str]]
-
 idx = pd.IndexSlice
 
 
-def cross_validation(
-        training: ModelGenerator, feature_columns: Strings, df: DataFrame = None,
-        n_splits: int = 997, return_column: str = 'return', lookback_window: int = None,
-) -> Tuple[Performance, DataFrame]:
+def cross_validation(model: ModelLike, feature_columns: Strings, df: DataFrame = None, return_column: str = 'return',
+                     train_lookback: Optional[int] = None, per_eval_lookback: int = 1) -> Tuple[Performance, DataFrame]:
     """
     Perform cross validation backtest on the given set of features.
 
-    :param training: a function that builds a model based on the input feature/target arguments.
-            Signature: (DataFrame, Series) -> SupportsPredict
+    :param model: a model-like that supports fitting and predicting.
     :param feature_columns:
     :param df: the full dataframe containing all necessary data
-    :param n_splits: number of splits, 997 by default (since the return data is missing on day 999 and 1000, and we need
-            the first day to be in the first training fold)
     :param return_column:
-    :param lookback_window: max number of days of the training feature dataframe, `None` means no truncation.
+    :param train_lookback: max number of days of the training feature dataframe, `None` means no truncation.
+    :param per_eval_lookback: specifies how many days are need for evaluating the prediction on one validation day.
     :return: performance: a dictionary containing the metric evaluation for each fold.
     :return: cum_y_val_df: a dataframe containing the progressive prediction of y on the validation set and the true values.
     """
@@ -59,33 +56,31 @@ def cross_validation(
     check_dataframe(df, expect_index=['day', 'asset'], expect_feature=feature_columns + [return_column])
 
     days = df.index.get_level_values('day').unique()
-    if len(days) < n_splits:
-        print('Warning: number of splits is larger than days available in the training set.')
-    tscv = TimeSeriesSplit(n_splits=min(n_splits, len(days)))
-    pbar = tqdm(tscv.split(days), total=tscv.n_splits)
-    performance = Performance()
+    start_day = df.index.get_level_values('day').min()
+    N_days = len(days)
+    if train_lookback is not None:
+        pbar = trange(per_eval_lookback + train_lookback + start_day, N_days + 1)
+    else:
+        pbar = trange(2 + start_day, N_days + 1)
 
+    performance = Performance()
     VAL_PRED_LABEL = 'cum_y_val_prediction'
     VAL_TRUE_LABEL = 'cum_y_val_true'
     cum_y_val_df = DataFrame(columns=[VAL_PRED_LABEL, VAL_TRUE_LABEL], dtype=float)
 
-    for fold, (train, val) in enumerate(pbar):
-        days_train = days[train]
-        days_val = days[val]
-        if len(days_train) < 2:
-            print('Skipping this fold since we cannot truncate the last day.')
-            continue
-        if (lookback_window is not None) and (len(days_train) > lookback_window):
-            days_train_valid = days_train[-lookback_window - 1:-1]
-        else:
-            days_train_valid = days_train[:-1]
+    for val_index in pbar:
+        days_train = np.arange(start_day if train_lookback is None else
+                               (val_index - per_eval_lookback - train_lookback), val_index - 1)
+        days_val = np.arange(val_index + 1 - per_eval_lookback, val_index + 1)
 
-        X_train, y_train_true = df.loc[(days_train_valid,), :][feature_columns], df.loc[(days_train_valid,), :][
-            return_column]
-        model = training(X_train, y_train_true)
-        y_train_prediction = Series(model.predict(X_train), index=y_train_true.index)
+        X_train = df.loc[idx[days_train, :], feature_columns]
+        y_train_true = df.loc[idx[days_train[per_eval_lookback - 1:], :], return_column]
+        y_train_pred = model.fit_predict(X_train, y_train_true)
+        # print(y_train_pred.shape)
+        y_train_prediction = Series(y_train_pred, index=y_train_true.index)  # TODO: check shape
 
-        X_val, y_val_true = df.loc[(days_val,), :][feature_columns], df.loc[(days_val,), :][return_column]
+        X_val = df.loc[idx[days_val, :], feature_columns]
+        y_val_true = df.loc[idx[days_val[per_eval_lookback - 1:], :], return_column]
         y_val_prediction = Series(model.predict(X_val), index=y_val_true.index)
 
         cum_y_val_df = pd.concat([cum_y_val_df, DataFrame({
@@ -94,17 +89,18 @@ def cross_validation(
         })], axis=0, copy=False)
 
         train_r2 = r2_score(y_train_true, y_train_prediction)
-        performance[fold, 'train_r2'] = train_r2
-        val_r2 = r2_score(y_val_true, y_val_prediction)
-        performance[fold, 'val_r2'] = val_r2
-        val_pearson = y_val_true.corr(y_val_prediction)
-        performance[fold, 'val_pearson'] = val_pearson
+        performance[val_index, 'train_r2'] = train_r2
+        val_r2 = r2_score(y_val_true, y_val_prediction) if len(y_val_true) > 1 else np.nan
+        performance[val_index, 'val_r2'] = val_r2
+        val_pearson = y_val_true.corr(y_val_prediction) if len(y_val_true) > 1 else np.nan
+        performance[val_index, 'val_pearson'] = val_pearson
         val_cum_r2 = r2_score(cum_y_val_df[VAL_TRUE_LABEL], cum_y_val_df[VAL_PRED_LABEL])
-        performance[fold, 'val_cum_r2'] = val_cum_r2
+        performance[val_index, 'val_cum_r2'] = val_cum_r2
         val_cum_pearson = cum_y_val_df[VAL_TRUE_LABEL].corr(cum_y_val_df[VAL_PRED_LABEL])
-        performance[fold, 'val_cum_pearson'] = val_cum_pearson
+        performance[val_index, 'val_cum_pearson'] = val_cum_pearson
 
-        pbar.set_description(f'Fold {fold}, val_cum_r2={val_cum_r2:.4f}, val_cum_pearson={val_cum_pearson:.4f}')
+        pbar.set_description(
+            f'Validation on day {val_index}, train_r2={train_r2:.4f}, val_r2={val_r2:.4f}, val_cum_r2={val_cum_r2:.4f}, val_cum_pearson={val_cum_pearson:.4f}')
 
     cum_y_val_df.index = MultiIndex.from_tuples(cum_y_val_df.index, names=['day', 'asset'])
 
@@ -136,16 +132,15 @@ class AugmentationOption:
         self.quantization = quantization
 
 
-def evaluation_for_submission(model: ModelLike, feature_columns: Strings, dataset: Dataset, df: DataFrame,
-                              qids: QIDS, lookback_window: Union[int, None] = 200, eval_lookback_window:int=1, option: AugmentationOption = None,
-                              pre_allocate: bool = True) -> Performance:
+def evaluation_for_submission(model: ModelLike, feature_columns: Strings, dataset: Dataset, qids: QIDS,
+                              lookback_window: Union[int, None] = 200, per_eval_lookback: int = 1,
+                              option: AugmentationOption = None, pre_allocate: bool = True) -> Performance:
     """
     Evaluate the given model on the test dataset for submission.
     Assuming no additional features except the fundamental data and extracted market data.
 
     :rtype: object
     :param dataset:
-    :param df:
     :param qids_path_prefix:
     :return:
     """
@@ -155,12 +150,14 @@ def evaluation_for_submission(model: ModelLike, feature_columns: Strings, datase
 
     # Add return data from past few days
     m_df = extract_market_data(dataset.market)
-    df = pd.concat([df, m_df], axis=1)
+    df = pd.concat([dataset.fundamental, m_df], axis=1)
 
     return_0 = df['return_0']
     return_list = []
     for i in range(1, option.return_lookback + 1):
-        return_list.append(return_0.groupby(level=1).apply(lambda df: df.shift(i).bfill()).rename(f'return_{i}'))
+        # return_i = return_0.groupby(level=1, group_keys=False).apply(lambda df: df.shift(i).bfill())
+        return_i = return_0.shift(N_asset * i).fillna(0)
+        return_list.append(return_i.rename(f'return_{i}'))
     df = pd.concat([df, *return_list], axis=1)
 
     # Add market return
@@ -227,8 +224,8 @@ def evaluation_for_submission(model: ModelLike, feature_columns: Strings, datase
         if option.market_return:
             for i in range(1, option.market_return_lookback + 1):
                 current_slice[f'market_return_{i}'] = cum_df.loc[(current_day - i, 1), 'market_return_0']
-        for i in range(1, option.return_lookback+1):
-            current_slice[f'return_{i}'] = cum_df.loc[idx[[before1_day], :], f'return_{i-1}'].values
+        for i in range(1, option.return_lookback + 1):
+            current_slice[f'return_{i}'] = cum_df.loc[idx[[before1_day], :], f'return_{i - 1}'].values
         current_close = m_current_slice.loc[(current_day, range(N_asset), N_timeslot), 'close'].reset_index('timeslot',
                                                                                                             drop=True)
         if pre_allocate:
@@ -246,46 +243,29 @@ def evaluation_for_submission(model: ModelLike, feature_columns: Strings, datase
         else:
             cum_return_true = pd.concat([cum_return_true, ret_n2_true])
 
-        # if isinstance(model, SupportsPredict):
-        #     train_r2 = 0  # since the model does not require re-train
-        #
-        #     additional_features, _ = data_quantization(current_slice)
-        #     all_features = pd.concat([current_slice, additional_features], axis=1)
-        #
-        #     current_prediction = Series(data=model.predict(cum_df.loc[idx[current_day-eval_lookback_window+1:current_day,:], feature_columns]),
-        #                                 index=current_slice.index, name='pred_return')
-        #     assert current_prediction.index.is_monotonic_increasing
-        #     env.input_prediction(current_prediction)
-        # elif hasattr(model_selection, 'fit') and callable(model.fit):
-
         # First, train the model on what we already have
-        train_start_date = max(1, before1_day - lookback_window) if lookback_window is not None else 1
-        sub_cum_df = cum_df.loc[(range(train_start_date, current_day + 1),), :]
-        # additional_features, _ = data_quantization(sub_cum_df)
-        all_features = sub_cum_df
-        # all_features = pd.concat([sub_cum_df, additional_features], axis=1)
-        feature_to_last_day = all_features.loc[(range(train_start_date, before1_day),), feature_columns]
-        target_to_last_day = cum_return_true.loc[(range(train_start_date, before1_day),)]
-        model.fit(feature_to_last_day, target_to_last_day)
-        # train_r2 = r2_score(target_to_last_day, model.predict(feature_to_last_day))
-        # train_r2 = r2_score(target_to_last_day[-54:], model.predict(feature_to_last_day))
+        days_train = np.arange(1 if lookback_window is None else (current_day - per_eval_lookback - lookback_window),
+                               before1_day)
 
-        current_prediction = Series(
-            data=model.predict(all_features.loc[idx[current_day-eval_lookback_window+1:current_day, :], feature_columns]),
-            index=current_slice.index, name='pred_return')
-        assert current_prediction.index.is_monotonic_increasing
-        env.input_prediction(current_prediction)
+        X_train = cum_df.loc[idx[days_train, :], feature_columns]
+        y_train_true = cum_return_true.loc[idx[days_train[per_eval_lookback - 1:], :]]
+        y_train_pred = model.fit_predict(X_train, y_train_true)
+        y_train_prediction = Series(y_train_pred, index=y_train_true.index)  # TODO: check shape
+        train_r2 = r2_score(y_train_true, y_train_prediction)
 
-        # else:
-        #     raise ValueError(f'model={model} needs to be either a ModelGenerator or a SupportsPredict object!')
+        X_eval = cum_df.loc[idx[(current_day + 1 - per_eval_lookback): current_day, :], feature_columns]
+        y_eval_prediction = Series(model.predict(X_eval), index=X_eval.index, name='pred_return')
+
+        assert y_eval_prediction.index.is_monotonic_increasing
+        env.input_prediction(y_eval_prediction)
 
         if pre_allocate:
             cum_return_pred.iloc[
-            (current_day - 1 - N_train_days) * N_asset:(current_day - N_train_days) * N_asset] = current_prediction
+            (current_day - 1 - N_train_days) * N_asset:(current_day - N_train_days) * N_asset] = y_eval_prediction
         else:
-            cum_return_pred = pd.concat([cum_return_pred, current_prediction])
+            cum_return_pred = pd.concat([cum_return_pred, y_eval_prediction])
 
-        performance[current_day, 'train_r2'] = 0
+        performance[current_day, 'train_r2'] = train_r2
         if before2_day > N_train_days:
             ret_n2_pred = cum_return_pred.loc[(before2_day,)]
             test_r2 = r2_score(ret_n2_true, ret_n2_pred)
@@ -315,6 +295,7 @@ class Test(TestCase):
         from matplotlib import pyplot as plt
         from datatools import data_quantization
         from pipeline import load_mini_dataset
+        import matplotlib as mpl
 
         dataset = load_mini_dataset('data/parsed_mini', 10, path_prefix='..')
         quantized_fundamental, _ = data_quantization(dataset.fundamental)
@@ -323,13 +304,29 @@ class Test(TestCase):
                             'pe_ttm_QUANTILE', 'pe_QUANTILE', 'pcf_QUANTILE']
         original_feature = ['turnoverRatio', 'transactionAmount', 'pb', 'ps', 'pe_ttm', 'pe', 'pcf']
 
-        def linear_model(X: DataFrame, y: Series):
-            reg = LinearRegression().fit(X, y)
-            return reg
+        class SimpleLinearModel(ModelLike):
+            def __init__(self):
+                self.reg = LinearRegression()
 
-        performance, cum_y_val_df = cross_validation(linear_model, quantile_feature, df=df, n_splits=9,
-                                                     lookback_window=5)
+            def fit_predict(self, X: DataFrame, y: Series):
+                print('fit:')
+                print(X.index.get_level_values(0).unique())
+                self.reg.fit(X, y)
+                return self.reg.predict(X)
 
+            def predict(self, X: DataFrame):
+                print('predict:')
+                print(X.index.get_level_values(0).unique())
+                return self.reg.predict(X)
+
+        simple_linear_model = SimpleLinearModel()
+
+        performance, cum_y_val_df = cross_validation(simple_linear_model, quantile_feature, df=df, train_lookback=5,
+                                                     per_eval_lookback=1)
+        performance, cum_y_val_df = cross_validation(simple_linear_model, quantile_feature, df=df, train_lookback=5,
+                                                     per_eval_lookback=3)
+
+        mpl.use('TkAgg')
         plt.figure()
         plot_performance(performance, metrics_selected=['train_r2', 'val_cum_pearson'])
         plt.show()
@@ -362,10 +359,8 @@ class Test(TestCase):
 
         qids = QIDS(path_prefix='../')
         # qids = None
-        performance = evaluation_for_submission(
-            linear_model, feature, dataset=dataset, df=df, qids=qids, lookback_window=200,
-            option=AugmentationOption(market_return=True),
-        )
+        performance = evaluation_for_submission(linear_model, feature, dataset=dataset, qids=qids, lookback_window=200,
+                                                option=AugmentationOption(market_return=True))
 
         plt.figure()
         plot_performance(performance, metrics_selected=['train_r2', 'test_cum_r2', 'test_cum_pearson'])

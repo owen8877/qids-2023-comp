@@ -31,7 +31,6 @@
     - Can't use data after, e.g. can't obtain return of sAd(B-1) as it needs sAd(B+1)
     - Computed percentage: $$ sAdB = \frac{sAd(B+2)p50 - sAdBp50}{sAdBp50}$$
 
-
-
-
-
+## Potential issues
+- pe of asset 17 is too large
+- 

@@ -19,3 +19,4 @@ dependencies:
   - ipympl
   - pytorch-cuda>=11.7
   - cudatoolkit>=11.7
+  - xarray

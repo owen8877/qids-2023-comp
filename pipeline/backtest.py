@@ -256,7 +256,7 @@ def evaluation_for_submission(model: ModelLike, dataset: Dataset, qids: QIDS, lo
         train_r2 = r2_score(y_train_true, y_train_prediction)
 
         X_eval = cum_df.loc[idx[(current_day + 1 - per_eval_lookback): current_day, :], :]
-        y_eval_prediction = Series(model.predict(X_eval), index=X_eval.index, name='pred_return')
+        y_eval_prediction = Series(model.predict(X_eval), index=X_eval.index[-N_asset:], name='pred_return')
 
         assert y_eval_prediction.index.is_monotonic_increasing
         env.input_prediction(y_eval_prediction)

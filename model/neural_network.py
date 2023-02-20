@@ -10,6 +10,8 @@ from torch import nn
 from torch.autograd import Variable
 from torch.optim.lr_scheduler import ExponentialLR
 
+import xarray as xr
+
 idx = pd.IndexSlice
 
 FEATURE_1 = 12
@@ -180,8 +182,13 @@ class DataPreprocessing:
         })
 
     def working(self, X: DataFrame, t):
-        return DataFrame(t(self.unskew(X)), index=X.index, columns=list(set(X.columns) - {'return_0+1'})
-                         ).merge(X['return_0+1'], on=['day', 'asset'])
+        # return DataFrame(t(self.unskew(X)), index=X.index, columns=list(set(X.columns) - {'return_0+1'})
+        #                  ).merge(X['return_0+1'], on=['day', 'asset'])
+        tX = self.unskew(X)
+        aa = (X['return_0'] + 1) * (X['return_1'] + 1) - 1
+        df = DataFrame(t(tX), index=tX.index, columns=tX.columns)
+        df['return_0+1'] = aa
+        return df
 
     def fit_transform(self, X: DataFrame):
         return self.working(X, lambda Y: self.scaler.fit_transform(Y))
@@ -216,26 +223,27 @@ class NN_wrapper():
         self.ascheduler = ExponentialLR(self.optimizer, gamma=0.999)
         self.optim_name = optimizer
         self.n_epoch = n_epoch
+        self.is_learning = True
 
-    def fit_predict(self, X, y):
+    def fit_predict(self, X_, y_):
         self.net.train()
-        X_transformed = self.preprocess.fit_transform(X)
-        X_np = X_transformed.swaplevel(1, 0).sort_index(ascending=True).to_numpy().astype(np.float32)
+        X = xr.Dataset.from_dataframe(X_)
+        y = xr.DataArray.from_series(y_)
+        X_pd = X.to_dataframe(dim_order=['day', 'asset'])
+        X_transformed_pd = self.preprocess.fit_transform(X_pd)
+        X_transformed = xr.Dataset.from_dataframe(X_transformed_pd)
 
-        X_ult_list = []
-        y_ult_list = []
+        start_day = X_transformed.day.min().to_numpy().item()
 
-        for i in range(self.train_lookback):
-            X_np_day = X_np[i * self.n_asset:(i + self.per_eval_lookback) * self.n_asset, :]
-
-            # shape (asset, days, feature) -> (ft, days, asset)
-            X_np_tensor = X_np_day.reshape(self.n_asset, self.per_eval_lookback, -1).transpose([2, 1, 0])
-            X_np_tensor = X_np_tensor[np.newaxis, :]  # add batch dimension
-            X_ult_list.append(torch.from_numpy(X_np_tensor))
-            y_ult_list.append(torch.tensor(y[i * self.n_asset:(i + 1) * self.n_asset].values).to(torch.float)[None, :])
-
-        y_ult = torch.cat(y_ult_list)
-        X_ult = torch.cat(X_ult_list)
+        X_ult = torch.cat([torch.from_numpy(
+            X_transformed.sel(day=slice(start_day + i, start_day + i + self.per_eval_lookback - 1))
+            .to_array(dim='feature').transpose('feature', 'day', 'asset')
+            .to_numpy()[np.newaxis, :]) for i in range(self.train_lookback)
+        ], dim=-1).to(torch.float)
+        y_ult = torch.cat([torch.from_numpy(
+            y.sel(day=start_day + i + self.per_eval_lookback - 1)
+            .to_numpy()[np.newaxis, :]) for i in range(self.train_lookback)
+        ], dim=-1).to(torch.float)
 
         for epoch in range(self.n_epoch):
             # print('its actually training')
@@ -266,7 +274,7 @@ class NN_wrapper():
 
     def predict(self, X):
         self.net.eval()
-        X_transformed = self.preprocess.fit_transform(X)
+        X_transformed = self.preprocess.transform(X)
         X_np = X_transformed.swaplevel(1, 0).sort_index(ascending=True).to_numpy().astype(np.float32)
         # shape (asset, days, feature) -> (ft, days, asset)
         X_np_tensor = X_np.reshape(self.n_asset, self.per_eval_lookback, -1).transpose([2, 1, 0])
@@ -292,7 +300,7 @@ class Test(TestCase):
         from matplotlib import pyplot as plt
         from visualization.metric import plot_performance
 
-        dataset = Dataset.load('../../data/parsed')
+        dataset = Dataset.load('../data/parsed')
         df = pd.concat([dataset.fundamental, dataset.ref_return], axis=1).dropna()
 
         check_dataframe(df, expect_index=['day', 'asset'])

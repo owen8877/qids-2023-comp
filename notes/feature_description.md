@@ -33,4 +33,13 @@
 
 ## Potential issues
 - pe of asset 17 is too large
-- 
+
+## Coding tips
+- When indexing with xarray-s, always index variables first:
+```python
+ds['foo'].sel(bar=1)  # good
+ds.sel(bar=1)['foo']  # naughty, but works
+ds['foo'].loc[dict(bar=1)] = 42  # good
+ds['foo'].sel(bar=1) = 42  # fails silently
+ds.sel(bar=1)['foo'] = 42  # fails silently
+```

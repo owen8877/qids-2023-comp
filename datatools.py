@@ -5,7 +5,10 @@ import numpy as np
 import pandas as pd
 from pandas import DataFrame, Series
 from sklearn.decomposition import TruncatedSVD
+from xarray import DataArray, Dataset
+import xarray as xr
 
+import pipeline
 from pipeline import N_timeslot, N_asset
 
 
@@ -203,7 +206,7 @@ def data_quantization(pd_data, scale=10):
     return data_quantile, percent_of_zero
 
 
-def extract_market_data(m_df: DataFrame):
+def extract_market_data_legacy(m_df: DataFrame):
     """
     Input the market data and extract mean price using close
     prices, volatility, daily return and mean volume
@@ -253,7 +256,60 @@ def extract_market_data(m_df: DataFrame):
     remaining_day_return = close_price.iloc[N_asset:] / close_price.shift(N_asset)[N_asset:] - 1
 
     m_df_day['return_0'] = pd.concat([day_1_return, remaining_day_return])
+    m_df_day['close_0'] = m_df.groupby(level=[0, 1])['close'].take([N_timeslot - 1]).values
     return m_df_day
+
+
+def extract_market_data(ds: Dataset):
+    """
+    Input the market data and extract mean price using close
+    prices, volatility, daily return and mean volume
+    :param ds: [xr.Dataset] dataset that contains market data
+    :return: [xr.Dataset] extracted features from market data
+    """
+    assert not ds.isnull().any().to_array().any().item()
+
+    day_money_sum = ds['money'].sum('timeslot')
+    day_volume_sum = ds['volume'].sum('timeslot')
+    avg_price = day_money_sum / day_volume_sum
+    day_volume_s = day_volume_sum.to_series()
+    indx_day = day_volume_s.where(day_volume_s == 0).dropna()
+
+    for day_idx, asset_idx in indx_day.index:
+        sub_ds = ds.sel(day=day_idx, asset=asset_idx)
+        replace_value = (sub_ds['high'].max() + sub_ds['low'].min()) / 2
+        avg_price.loc[dict(day=day_idx, asset=asset_idx)] = replace_value
+
+    assert not avg_price.isnull().any().item(), "Clean data still contains NaN"
+
+    # Compute volatility
+    T = len(ds.timeslot)  # number of time units
+    # note numpy use 0 dof while pd use 1 dof
+    volatility = ds['close'].std('timeslot', ddof=1) * np.sqrt(T)
+
+    # Compute average volume:
+    mean_volume = day_volume_sum / T
+
+    # Daily return that compares the first open and the last close
+    daily_close_price = ds['close'].sel(timeslot=T, drop=True)
+    daily_open_price = ds['open'].sel(timeslot=1, drop=True)
+    daily_high_price = ds['high'].max(dim='timeslot')
+    daily_low_price = ds['low'].min(dim='timeslot')
+
+    previous_close_price = daily_close_price.shift(day=1)
+    previous_close_price[dict(day=0)] = daily_open_price.isel(day=0)
+    daily_return = daily_close_price / previous_close_price - 1
+
+    return Dataset(dict(
+        avg_price=avg_price,
+        volatility=volatility,
+        mean_volume=mean_volume,
+        close_0=daily_close_price,
+        open_0=daily_open_price,
+        high_0=daily_high_price,
+        low_0=daily_low_price,
+        return_0=daily_return,
+    ))
 
 
 def check_dataframe(df, expect_index=None, expect_feature=None, shutup=True):
@@ -282,7 +338,7 @@ def check_dataframe(df, expect_index=None, expect_feature=None, shutup=True):
         print('DataFame is all good for the tests')
 
 
-def calculate_market_return(
+def calculate_market_return_legacy(
         df: DataFrame, return_0_column: str = 'return_0', weight: Optional[np.ndarray] = None,
 ) -> Series:
     """
@@ -303,14 +359,32 @@ def calculate_market_return(
     return market_return.rename(f'market_{return_0_column}')
 
 
-class Test(TestCase):
-    def test_extract_market(self):
-        from pipeline import load_mini_dataset
+def calculate_market_return(return_0: DataArray, weight: Optional[np.ndarray] = None, ) -> DataArray:
+    """
+    Calculate the market daily return by combining the return for each asset according to the given weight.
+    """
+    # assert {'day', 'asset'}.issubset(set(return_0.dims))
+    if weight is not None:
+        raise ValueError('Currently, only `weight=None` (i.e. simple average) is supported.')
+    else:
+        # Simple return
+        market_return = return_0.mean(dim='asset')
 
-        dataset = load_mini_dataset('./data/parsed_mini', 10)
-        m_df = extract_market_data(dataset.market)
-        check_dataframe(m_df, expect_index=['day', 'asset'],
-                        expect_feature=['avg_price', 'volatility', 'mean_volume', 'return_0'])
+    return market_return.rename(f'market_return_0')
+
+
+class Test(TestCase):
+    def test_export_extract_market(self):
+        ds = xr.open_dataset('data/nc/base.nc')
+        market_brief = extract_market_data(ds)
+        market_brief.to_netcdf('data/nc/market_brief.nc')
+
+    def test_compare_extract_market(self):
+        market_brief = xr.open_dataset('data/nc/market_brief.nc')
+        dataset = pipeline.Dataset.load('data/parsed')
+        market_legacy = extract_market_data_legacy(dataset.market)
+        for col in market_legacy:
+            assert np.isclose(market_brief.to_dataframe()[col], market_legacy[col]).all()
 
     def test_checkdata(self):
         from pipeline import load_mini_dataset

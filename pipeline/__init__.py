@@ -15,6 +15,7 @@ N_test_days = 700
 
 class Dataset:
     def __init__(self, market: DataFrame, fundamental: DataFrame, ref_return: DataFrame):
+        print('DeprecationWarning: load `@/data/nc/base.nc` instead!')
         self.is_train = ref_return is not None
 
         self.market = market
@@ -43,7 +44,7 @@ class Dataset:
             raise e
 
 
-def generate_mini_csv(n_days: int = 10, path_prefix:str='..'):
+def generate_mini_csv(n_days: int = 10, path_prefix: str = '..'):
     """
     Generate a mini dataset (usually consisting 10 days) that is useful for unittesting.
 

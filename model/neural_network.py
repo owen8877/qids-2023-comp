@@ -239,11 +239,11 @@ class NN_wrapper():
             X_transformed.sel(day=slice(start_day + i, start_day + i + self.per_eval_lookback - 1))
             .to_array(dim='feature').transpose('feature', 'day', 'asset')
             .to_numpy()[np.newaxis, :]) for i in range(self.train_lookback)
-        ], dim=-1).to(torch.float)
+        ], dim=0).to(torch.float)
         y_ult = torch.cat([torch.from_numpy(
             y.sel(day=start_day + i + self.per_eval_lookback - 1)
             .to_numpy()[np.newaxis, :]) for i in range(self.train_lookback)
-        ], dim=-1).to(torch.float)
+        ], dim=0).to(torch.float)
 
         for epoch in range(self.n_epoch):
             # print('its actually training')

@@ -376,7 +376,7 @@ def calculate_market_return(return_0: DataArray, weight: Optional[np.ndarray] = 
 class Test(TestCase):
     def test_export_extract_market(self):
         ds = xr.open_dataset('data/nc/base.nc')
-        market_brief = extract_market_data(ds)
+        market_brief = extract_market_data(ds[['money', 'volume', 'close', 'open', 'high', 'low']])
         market_brief.to_netcdf('data/nc/market_brief.nc')
 
     def test_compare_extract_market(self):

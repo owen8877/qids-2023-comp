@@ -79,7 +79,9 @@ def cross_validation(model: ModelLike, feature_columns: Strings, ds: Dataset = N
         X_train = ds[feature_columns].sel(day=days_train)
         y_train_true = ds[return_column].sel(day=days_train[per_eval_lookback - 1:])
         y_train_pred = model.fit_predict(X_train, y_train_true)
+
         y_train_prediction = DataArray(data=y_train_pred, coords=y_train_true.coords)  # TODO: check shape
+        # y_train_true has shape [days_slice, assets]
 
         X_val = ds[feature_columns].sel(day=days_val)
         y_val_true = ds[return_column].sel(day=days_val[per_eval_lookback - 1:])

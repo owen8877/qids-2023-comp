@@ -68,8 +68,9 @@ def cross_validation(model: ModelLike, feature_columns: Strings, ds: Dataset = N
 
     performance = Performance()
     coords = ds.sel(day=slice(val_start_day, end_day)).coords
-    cum_y_val_prediction = DataArray(np.nan, coords=coords)
-    cum_y_val_true = DataArray(np.nan, coords=coords)
+    sub_coords = {k: coords.get(k) for k in ('day', 'asset')}
+    cum_y_val_prediction = DataArray(np.nan, dims=['day', 'asset'], coords=sub_coords)
+    cum_y_val_true = DataArray(np.nan, dims=['day', 'asset'], coords=sub_coords)
 
     for val_index in pbar:
         days_train = np.arange(start_day if train_lookback is None else

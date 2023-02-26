@@ -64,8 +64,8 @@ def cross_validation(model: ModelLike, feature_columns: Strings, ds: Dataset = N
     start_day = ds.day.min().item()
     end_day = ds.day.max().item()
     val_start_day = (2 + start_day) if train_lookback is None else (per_eval_lookback + train_lookback + start_day)
-    # pbar = trange(val_start_day, end_day + 1)
-    pbar = trange(val_start_day, end_day - 1) # the last two days have no proper return
+    pbar = trange(val_start_day, end_day + 1)
+    # pbar = trange(val_start_day, end_day - 1) # the last two days have no proper return
 
 
     performance = Performance()
@@ -92,6 +92,7 @@ def cross_validation(model: ModelLike, feature_columns: Strings, ds: Dataset = N
         y_val_true = ds[return_column].sel(day=days_val[per_eval_lookback - 1:])
         # y_val_true.reindex(day=y_val_true.day[::-1]) ## for LSTM??
         y_val_prediction = DataArray(data=model.predict(X_val), coords=y_val_true.coords)
+
 
         cum_y_val_true.loc[dict(day=val_index)] = y_val_true.sel(day=val_index)
         cum_y_val_prediction.loc[dict(day=val_index)] = y_val_prediction.sel(day=val_index)
@@ -217,7 +218,6 @@ def evaluation_for_submission(model: ModelLike, given_ds: Dataset, qids: QIDS, l
         # Train the model on what we already have
         days_train = range(1 if lookback_window is None else (current_day - per_eval_lookback - lookback_window),
                            before1_day)
-
         X_train = ds[all_features_but_return].sel(day=days_train)
         assert not X_train.isnull().any().to_array().any().item()
         y_train_true = ds['return'].sel(day=days_train[per_eval_lookback - 1:])
@@ -226,7 +226,7 @@ def evaluation_for_submission(model: ModelLike, given_ds: Dataset, qids: QIDS, l
 
         X_eval = ds[all_features_but_return].sel(day=slice(current_day + 1 - per_eval_lookback, current_day))
         assert not X_eval.isnull().any().to_array().any().item()
-        y_eval_prediction = model.predict(X_eval).rename('return_pred')
+        y_eval_prediction = DataArray(data=model.predict(X_eval), dims=['day','asset']).rename('return_pred')
         assert set(y_eval_prediction.dims) == {'day', 'asset'}
         assert y_eval_prediction.asset.to_series().is_monotonic_increasing
         env.input_prediction(y_eval_prediction.transpose('day', 'asset').to_series())

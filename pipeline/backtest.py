@@ -64,7 +64,9 @@ def cross_validation(model: ModelLike, feature_columns: Strings, ds: Dataset = N
     start_day = ds.day.min().item()
     end_day = ds.day.max().item()
     val_start_day = (2 + start_day) if train_lookback is None else (per_eval_lookback + train_lookback + start_day)
-    pbar = trange(val_start_day, end_day + 1)
+    # pbar = trange(val_start_day, end_day + 1)
+    pbar = trange(val_start_day, end_day - 1) # the last two days have no proper return
+
 
     performance = Performance()
     coords = ds.sel(day=slice(val_start_day, end_day)).coords
@@ -77,14 +79,18 @@ def cross_validation(model: ModelLike, feature_columns: Strings, ds: Dataset = N
         days_val = np.arange(val_index + 1 - per_eval_lookback, val_index + 1)
 
         X_train = ds[feature_columns].sel(day=days_train)
+        # X_train.reindex(day=X_train.day[::-1]) #for LSTM??
         y_train_true = ds[return_column].sel(day=days_train[per_eval_lookback - 1:])
+        # y_train_true.reindex(day=y_train_true.day[::-1])  # for LSTM??
         y_train_pred = model.fit_predict(X_train, y_train_true)
 
         y_train_prediction = DataArray(data=y_train_pred, coords=y_train_true.coords)  # TODO: check shape
         # y_train_true has shape [days_slice, assets]
 
         X_val = ds[feature_columns].sel(day=days_val)
+        # X_val.reindex(day=X_val.day[::-1]) ## for LSTM??
         y_val_true = ds[return_column].sel(day=days_val[per_eval_lookback - 1:])
+        # y_val_true.reindex(day=y_val_true.day[::-1]) ## for LSTM??
         y_val_prediction = DataArray(data=model.predict(X_val), coords=y_val_true.coords)
 
         cum_y_val_true.loc[dict(day=val_index)] = y_val_true.sel(day=val_index)

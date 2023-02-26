@@ -1,7 +1,7 @@
 ### Some notes (add more as you like):
 - Date-time perferred ordering: day > asset > timeslot. 
 - Don't forget to automate data processing pipeline for ease of real testing (e.g. a parsing function?)
-
+- Maybe learning the MSE loss is too hard (predict future return exactly) How about we learn the probablity of going up and down?
 
 ### Issue: 
 - Mini dataset - unnamed column

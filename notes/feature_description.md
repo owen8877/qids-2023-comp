@@ -7,6 +7,7 @@
 ## Features in Fundamental data:
 - "date_time": sAdB format
 - "turnoveRatio": Turnover Ratio
+  - can derive market share, but seem inconsistent with the price due to splits; check money and volume
 - "transactionAmount": total amount of transactions (多少手)
 - "pe_ttm": Price-to-Earnings Ratio (Trailing Twelve Months)
 - "pe": Price-to-Earnings Ratio

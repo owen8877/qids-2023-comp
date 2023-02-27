@@ -141,12 +141,10 @@ class AugmentationOption:
             self,
             return_lookback: int = 2,
             market_return: bool = False, market_return_lookback: int = 5,
-            quantization: bool = False,
     ):
         self.return_lookback = return_lookback
         self.market_return = market_return
         self.market_return_lookback = market_return_lookback
-        self.quantization = quantization
 
 
 def evaluation_for_submission(model: ModelLike, given_ds: Dataset, qids: QIDS, lookback_window: Union[int, None] = 200,
@@ -156,10 +154,11 @@ def evaluation_for_submission(model: ModelLike, given_ds: Dataset, qids: QIDS, l
     Assuming no additional features except the fundamental data and extracted market data.
     """
     N_total = N_train_days + N_test_days
-    more_ds = Dataset(data_vars={k: np.nan for k in given_ds.data_vars},
+    more_ds = Dataset(data_vars={k: np.nan for k in given_ds.data_vars if k != 'market_share'},
                       coords=dict(day=range(N_train_days + 1, N_total + 1), asset=range(N_asset),
                                   timeslot=range(1, N_timeslot + 1)))
     ds: Dataset = xr.combine_by_coords([given_ds, more_ds])
+    ds['market_share'] = given_ds['market_share']
 
     if option is None:
         option = AugmentationOption()
@@ -215,6 +214,11 @@ def evaluation_for_submission(model: ModelLike, given_ds: Dataset, qids: QIDS, l
                 ds[f'market_return_{i}'].loc[dict(day=current_day)] = ds['market_return_0'].sel(day=current_day - i)
         for i in range(1, option.return_lookback + 1):
             ds[f'return_{i}'].loc[dict(day=current_day)] = ds[f'return_{i - 1}'].sel(day=before1_day)
+
+        _d_ = dict(day=current_day)
+        for p_f, f in ('b', 'book'), ('e_ttm', 'earnings_ttm'), ('e', 'earnings'), ('s', 'sales'), ('cf', 'cashflow'):
+            ds[f].loc[_d_] = ds['close_0'].loc[_d_] / ds[f'p{p_f}'].loc[_d_]
+        ds['market_cap'].loc[_d_] = ds['close_0'].sel(day=current_day) * ds['market_share']
 
         # Train the model on what we already have
         days_train = range(1 if lookback_window is None else (current_day - per_eval_lookback - lookback_window),

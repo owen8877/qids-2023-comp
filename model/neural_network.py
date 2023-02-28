@@ -1,3 +1,5 @@
+from datetime import date
+from typing import Optional, Callable, Tuple
 from unittest import TestCase
 
 import numpy as np
@@ -10,56 +12,174 @@ from torch import nn
 from torch.autograd import Variable
 from torch.optim.lr_scheduler import ExponentialLR
 
+import torch.nn.functional as F
 import xarray as xr
+from xarray import Dataset, DataArray
+
+from util import ensure_dir
 
 idx = pd.IndexSlice
 
-FEATURE_1 = 12
-FEATURE_2 = 12
-FEATURE_3 = 12
-FEATURE_4 = 12
 
-FC_3 = 8
-FC_2 = 5
+def _num_flat_features(x):
+    size = x.size()[1:]  # all dimensions except the batch dimension
+    num_features = 1
+    for s in size:
+        num_features *= s
+    return num_features
 
 
-class oneDVerConvNet(nn.Module):  # type3 - 1D Vertical Convolution
-    def __init__(self, D_in, D_out, input_shape, b_size):
+def _device_helper(is_cuda):
+    return 'cuda' if is_cuda else 'cpu'
+
+
+class CUDAModule(nn.Module):
+    def __init__(self, is_cuda: bool):
+        super().__init__()
+        self.is_cuda = is_cuda
+        self.device = _device_helper(self.is_cuda)
+        self._has_moved = False
+
+    def move(self):
+        self._has_moved = True
+        self.to(self.device)
+
+    def forward_device_independent(self, x: torch.Tensor):
+        raise NotImplementedError
+
+    def forward(self, x: torch.Tensor):
+        if not self._has_moved:
+            print('This module might have not been moved to the correct device!')
+
+        return self.forward_device_independent(x.to(self.device)).to('cpu')
+
+
+class MLP(CUDAModule):
+    """
+    Fully connected NN
+    """
+
+    def __init__(self, D_out, input_shape, is_cuda: bool = True):
+        """
+
+        :param D_out: number of classes label
+        :param input_shape:
+        :param is_cuda:
+        """
+        super(MLP, self).__init__(is_cuda)
+
+        self.fc1 = nn.Linear(input_shape[1] * input_shape[2], 512)
+        self.fc2 = nn.Linear(512, 256)
+        self.fc3 = nn.Linear(256, 128)
+        self.fc4 = nn.Linear(128, D_out)
+        self.dropout = nn.Dropout(p=0.2)
+        self.bn1 = nn.BatchNorm1d(512)
+        self.bn2 = nn.BatchNorm1d(256)
+        self.bn3 = nn.BatchNorm1d(128)
+        self.relu = nn.ReLU()
+
+        # self.final_layer = nn.Softmax()
+
+        self.move()
+
+    def forward_device_independent(self, x):
+        x = x.contiguous().view(-1, _num_flat_features(x))
+        x = F.relu(self.bn1(self.fc1(x)))
+        x = F.relu(self.bn2(self.fc2(x)))
+        x = F.relu(self.bn3(self.dropout(self.fc3(x))))
+        x = self.fc4(x)
+        # x = self.final_layer(x)
+        return x
+
+
+class LSTM(CUDAModule):
+    def __init__(self, num_output, num_features, hidden_size, num_layers, is_cuda: bool = False):
+        """
+
+        Remark:
+            1. hidden_size is like embedding feature space dimension
+            2. better > num_assets?
+                # if num_layers = 2: stack 2 LSTM of lyaer 1:
+                # nn.Sequential(OrderedDict([
+                #     ('LSTM1', nn.LSTM(input_size, hidden_size, 1),
+                #     ('LSTM2', nn.LSTM(hidden_size, hidden_size, 1)
+                #     ]))
+        :param num_output:
+        :param num_features:
+        :param hidden_size:
+        :param num_layers:
+        :param is_cuda:
+        """
+        super(LSTM, self).__init__(is_cuda)
+        self.num_output = num_output
+        self.num_layers = num_layers
+        self.num_features = num_features
+        self.hidden_size = hidden_size
+        # LSTM input size (batch_first) (batch, seq_length, feature)
+        self.lstm = nn.LSTM(input_size=num_features, hidden_size=hidden_size, num_layers=num_layers, batch_first=True)
+        self.dropout = nn.Dropout(p=0.2)
+        self.fc = nn.Linear(hidden_size, num_output)
+
+        self.move()
+
+    def forward_device_independent(self, x: torch.Tensor):
+        """
+
+        Remark: the second dim for h_0 and c_0 is the batch dim
+        :param x:
+        :return:
+        """
+        batch_size = x.shape[0]
+        # TODO: review: Variable if deprecated
+        # https://pytorch.org/docs/stable/autograd.html?highlight=variable#variable-deprecated
+        h_0 = torch.randn(self.num_layers, batch_size, self.hidden_size, device=self.device)  # hidden state
+        c_0 = torch.randn(self.num_layers, batch_size, self.hidden_size, device=self.device)  # cell state
+
+        # Propagate input through LSTM
+        ula, (h_out, _) = self.lstm(x, (h_0, c_0))
+        # get only the last hidden layer, needed for multiple layer
+        h_out = h_out[-1, :, :].view(-1, self.hidden_size)
+
+        out = self.fc(self.dropout(h_out))
+
+        return out
+
+
+class oneDVerConvNet(CUDAModule):
+    def __init__(self, D_in, D_out, input_shape, b_size, is_cuda: bool = True, activation: str = 'relu'):
         # input_shape: without batch dimension
         # b_size: batch size
-        super(oneDVerConvNet, self).__init__()
+        super(oneDVerConvNet, self).__init__(is_cuda)
+        self.activation = nn.ReLU() if activation == 'relu' else nn.Tanh()
         self.layer1 = nn.Sequential(
-            nn.Conv2d(D_in, FEATURE_1, (3, 1), stride=(1, 1), padding=(1, 0)),
+            nn.Conv2d(D_in, 16, (3, 1), stride=(1, 1), padding=(1, 0)),
             # nn.BatchNorm2d(16), # no batch
-            nn.Tanh(),
+            self.activation,
             nn.MaxPool2d(kernel_size=(2, 1), stride=(2, 1)))
         self.layer2 = nn.Sequential(
-            nn.Conv2d(FEATURE_1, FEATURE_2, kernel_size=(3, 1), stride=(1, 1), padding=(1, 0)),
+            nn.Conv2d(16, 64, kernel_size=(3, 1), stride=(1, 1), padding=(1, 0)),
             # nn.BatchNorm2d(64),
-            nn.Tanh(),
+            self.activation,
             nn.MaxPool2d(kernel_size=(2, 1), stride=(2, 1)))
         self.layer3 = nn.Sequential(
-            nn.Conv2d(FEATURE_2, FEATURE_3, kernel_size=(3, 1), stride=(1, 1), padding=(1, 0)),
+            nn.Conv2d(64, 256, kernel_size=(3, 1), stride=(1, 1), padding=(1, 0)),
             # nn.BatchNorm2d(256),
-            nn.Tanh(),
+            self.activation,
             nn.MaxPool2d(kernel_size=(2, 1), stride=(2, 1)))
         self.layer4 = nn.Sequential(
-            nn.Conv2d(FEATURE_3, FEATURE_4, kernel_size=(3, 1), stride=(1, 1), padding=(1, 0)),
+            nn.Conv2d(256, 1024, kernel_size=(3, 1), stride=(1, 1), padding=(1, 0)),
             # nn.BatchNorm2d(1024),
-            nn.Tanh(),
+            self.activation,
             nn.MaxPool2d(kernel_size=(2, 1), stride=(2, 1)))
         self.drop_out = nn.Dropout()
         n_size = self._get_conv_output(input_shape, b_size)
-        # print(n_size)
-        #       self.fc1 = nn.Linear(n_size, 256)
-        self.fc1 = nn.Linear(n_size, FC_3)
-        self.fc2 = nn.Linear(FC_3, FC_2)
-        self.fc3 = nn.Linear(FC_2, D_out)
-        # self.transform1 = nn.Conv2d(n_size, FEATURE_3, kernel_size=(1, 1), stride=(1, 1), padding=0)
-        # self.transform2 = nn.Conv2d(FEATURE_3, FEATURE_2, kernel_size=(1, 1), stride=(1, 1), padding=0)
-        # self.transform3 = nn.Conv2d(FEATURE_2, FEATURE_1, kernel_size=(1, 1), stride=(1, 1), padding=0)
-        # self.bn1 = nn.BatchNorm1d(256)
-        # self.bn2 = nn.BatchNorm1d(64)
+        self.fc1 = nn.Linear(n_size, 256)
+        self.fc2 = nn.Linear(256, 64)
+        self.fc3 = nn.Linear(64, D_out)
+        self.bn1 = nn.BatchNorm1d(256)
+        self.bn2 = nn.BatchNorm1d(64)
+
+        self.move()
 
     def _get_conv_output(self, shape, b_size):
         input = Variable(torch.rand(b_size, *shape))
@@ -76,80 +196,102 @@ class oneDVerConvNet(nn.Module):  # type3 - 1D Vertical Convolution
         x = torch.max(x, 3)[0]
         return x
 
-    def forward(self, x):
+    def forward_device_independent(self, x):
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(x)
-        # x = torch.max(x,3)[0] # questionable maybe do along [1]
-        # print(x.shape) # shape = (b_size, feature=1024, H=1) after max
-        # print(x.data.size())
-        # x = x.view(-1,self.num_flat_features(x))
-        #        print(x.data.size())
-        #         x = F.relu(self.bn1(self.fc1(x)))
-        #         x = F.relu(self.bn2(self.drop_out(self.fc2(x))))
-        x = torch.transpose(x[:, :, 0, :], 1, 2)
-        x = torch.tanh(self.drop_out(self.fc1(x)))
-        x = torch.tanh(self.drop_out(self.fc2(x)))
+        x = torch.max(x, 3)[0]  # questionable maybe do along [1]
+
+        x = x.view(-1, _num_flat_features(x))
+        x = F.relu(self.bn1(self.fc1(x)))
+        x = F.relu(self.bn2(self.drop_out(self.fc2(x))))
         x = self.fc3(x)
-        x = x.squeeze(dim=-1)
-        return x
-
-    def num_flat_features(self, x):
-        size = x.size()[1:]  # all dimensions except the batch dimension
-        num_features = 1
-        for s in size:
-            num_features *= s
-        return num_features
+        # x = F.relu(self.transform1(x))
+        # x = F.relu(self.drop_out(self.transform2(x)))
+        # x = self.transform3(x)
+        return x.squeeze()
 
 
-class oneD16_4_1VerConvNet(nn.Module):
-    def __init__(self, D_in, D_out, input_shape, b_size):
-        # input_shape: without batch dimension
-        # b_size: batch size
-        super(oneD16_4_1VerConvNet, self).__init__()
-        self.layer1 = nn.Sequential(
-            nn.Conv2d(D_in, FEATURE_1, (3, 1), stride=(1, 1), padding=(1, 0)),
-            nn.Tanh(),
-            nn.MaxPool2d(kernel_size=(4, 1), stride=(4, 1)))
-        self.layer2 = nn.Sequential(
-            nn.Conv2d(FEATURE_1, FEATURE_2, kernel_size=(3, 1), stride=(1, 1), padding=(1, 0)),
-            nn.Tanh(),
-            nn.MaxPool2d(kernel_size=(4, 1), stride=(4, 1)))
-        self.drop_out = nn.Dropout()
-        n_size = self._get_conv_output(input_shape, b_size)
-        self.fc1 = nn.Linear(n_size, FC_3)
-        self.fc2 = nn.Linear(FC_3, FC_2)
-        self.fc3 = nn.Linear(FC_2, D_out)
+class Transformer(CUDAModule):
+    def __init__(self, n_class: int, seq_length: int, feature: list, hidden_size: int, output_size: int,
+                 num_layer: int = 1, is_cuda: bool = False, offset_feature_size: Optional[int] = None):
+        super(Transformer, self).__init__(is_cuda)
+        self.n_feature = len(feature)
+        self.hidden_size = hidden_size
+        self.output_size = output_size
+        self.num_layer = num_layer
 
-    def _get_conv_output(self, shape, b_size):
-        input = Variable(torch.rand(b_size, *shape))
-        output_feat = self._forward_features(input)
-        n_size = output_feat.data.view(b_size, -1).size(1)
-        return n_size
+        self.class_dim = n_class
+        self.time_dim = seq_length
+        # self.class_embed = nn.Embedding(self.class_dim, self.) # try without embedding first
 
-    def _forward_features(self, x):
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = torch.max(x, 3)[0]
-        return x
+        self.embed_feature_dim = self.n_feature  # no embedding
+        ## one-hot encoding and positional encoding:
+        if 'offset_feature' in feature:
+            self.is_time_embed = True
+            self.time_embed = nn.Embedding(offset_feature_size, 8)
+            self.embed_feature_dim += 7
+            self.day_feature_indx = feature.index('offset_feature')
+        else:
+            self.is_time_embed = False
 
-    def forward(self, x):
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = torch.transpose(x[:, :, 0, :], 1, 2)
-        x = torch.tanh(self.drop_out(self.fc1(x)))
-        x = torch.tanh(self.drop_out(self.fc2(x)))
-        x = self.fc3(x)
-        x = x.squeeze(dim=-1)
-        return x
+        if 'asset_name' in feature:
+            self.embed_feature_dim += 53
+            self.is_asset_embed = True
+            self.asset_name_indx = feature.index('asset_name')
+        else:
+            self.is_asset_embed = False
+        print('embedding feature dimension is', self.embed_feature_dim)
 
-    def num_flat_features(self, x):
-        size = x.size()[1:]  # all dimensions except the batch dimension
-        num_features = 1
-        for s in size:
-            num_features *= s
-        return num_features
+        self.linear_1 = nn.Linear(self.embed_feature_dim, self.hidden_size)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=self.hidden_size,
+                                                   nhead=8,
+                                                   dropout=0.0,
+                                                   batch_first=True,
+                                                   )
+        self.encoder = nn.TransformerEncoder(encoder_layer, self.num_layer)
+        self.linear_2 = nn.Linear(self.hidden_size, self.output_size)
+
+        self.move()
+
+    def forward_device_independent(self, x: torch.Tensor):
+        columns_indx = torch.arange(x.shape[-1]).long()
+        # print('original indx', columns_indx)
+        indx_remain_bool = torch.ones(columns_indx.shape).long()
+
+        if self.is_time_embed:
+            day_feature = x[:, :, self.day_feature_indx].long()
+            day_feature = self.time_embed(day_feature)
+            indx_remain_bool *= (columns_indx != self.day_feature_indx)
+
+        if self.is_asset_embed:
+            # print(self.asset_name_indx)
+            asset_name = x[:, :, self.asset_name_indx]
+            # print(x)
+            # print(asset_name)
+            # print(asset_name.max())
+            assert asset_name.max().item() <= 54
+            asset_name = F.one_hot(asset_name.long(), 54)
+            indx_remain_bool *= (columns_indx != self.asset_name_indx)
+
+        # print('remain indices:', columns_indx[indx_remain_bool.long()==1])
+
+        # get data out except for embedded ones
+        x = x[:, :, indx_remain_bool.long() == 1]
+        # print(x.shape)
+        if self.is_time_embed:
+            x = torch.cat((x, day_feature), dim=-1)
+        if self.is_asset_embed:
+            x = torch.cat((x, asset_name), dim=-1)
+
+        # print(x.shape) # (432, 4, 71)
+
+        x = self.linear_1(x)
+        h = self.encoder(x)
+        h = h.mean(dim=1)
+        outputs = self.linear_2(h)
+        return outputs.squeeze()
 
 
 class SimpleLinearNetwork(nn.Module):
@@ -197,92 +339,144 @@ class DataPreprocessing:
         return self.working(X, lambda Y: self.scaler.transform(Y))
 
 
-class NN_wrapper():
-    def __init__(self, preprocess, net_path, per_eval_lookback, train_lookback, optimizer,
-                 learning_rate=0.003, criterion=nn.MSELoss(), n_epoch=3, n_asset=54, n_feature=7):
+def _get_lr(optimizer):
+    for param_group in optimizer.param_groups:
+        return param_group['lr']
+
+
+class NN_wrapper:
+    def __init__(
+            self, preprocess, lr=0.001, criterion=nn.MSELoss(), n_epoch=5, train_lookback=32, per_eval_lookback=16,
+            n_asset=54, hidden_size=64, lr_scheduler_constructor: Optional[Callable] = None, network='LSTM',
+            is_eval: bool = False, feature_name=None, load_model_path=None, is_cuda=True,
+            embed_offset: bool = False, embed_asset: bool = False,
+    ):
+        if feature_name is None:
+            raise ValueError('Please provide a list of feature')
+        feature_to_nn = feature_name.copy()
+        if embed_offset:
+            feature_to_nn += ['offset_feature']
+        if embed_asset:
+            feature_to_nn += ['asset_name']
+        n_feature = len(feature_name)
+
+        if network == 'LSTM':
+            self.net = LSTM(num_output=1, num_features=n_feature, hidden_size=hidden_size, num_layers=1,
+                            is_cuda=is_cuda)
+        elif network == 'MLP':
+            self.net = MLP(D_out=1, input_shape=[n_asset * train_lookback, per_eval_lookback, n_feature],
+                           is_cuda=is_cuda)
+        elif network == 'CONV':
+            self.net = oneDVerConvNet(D_in=1, D_out=1, input_shape=[1, per_eval_lookback, n_feature],
+                                      b_size=train_lookback * n_asset, is_cuda=is_cuda)
+        elif network == 'Transformer':
+            self.net = Transformer(n_class=n_asset, seq_length=per_eval_lookback, feature=feature_to_nn,
+                                   hidden_size=hidden_size, output_size=1, is_cuda=is_cuda,
+                                   offset_feature_size=per_eval_lookback)
+        else:
+            raise ValueError('Network architecture not supported')
+
+        if is_eval:
+            if load_model_path is None:
+                raise ValueError('Please provide model path to load')
+            else:
+                self.net.load_state_dict(torch.load(load_model_path))
+
+        if load_model_path is not None:
+            self.net.load_state_dict(torch.load(load_model_path))
+
+        self.is_eval = is_eval
+        self.feature_name = feature_name
+        self.feature_to_nn = feature_to_nn
+        self.n_epoch = n_epoch
+        self.criterion = criterion
+        self.train_lookback = train_lookback
+        self.per_eval_lookback = per_eval_lookback
+        self.n_asset = n_asset
+        self.net_name = network
+        self.embed_asset = embed_asset
+        self.embed_offset = embed_offset
+
+        # Define the optimizier
+        self.optimizer = optim.Adam(self.net.parameters(), lr=lr, betas=(0.9, 0.999))
+        # self.scheduler = optim.lr_scheduler.CyclicLR(self.optimizer, base_lr=lr / 10, max_lr=lr,
+        #                                              step_size_up=n_epoch // 2, cycle_momentum=False)
+        if lr_scheduler_constructor is None:
+            self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=100, gamma=0.5)
+        else:
+            self.scheduler = lr_scheduler_constructor(self.optimizer)
 
         self.preprocess = preprocess
-        self.n_asset = n_asset
-        self.net = oneD16_4_1VerConvNet(D_in=n_feature, D_out=1,
-                                        input_shape=(n_feature, per_eval_lookback, self.n_asset), b_size=1)
-        if net_path:
-            self.net.load_state_dict(torch.load(net_path))
-        self.per_eval_lookback = per_eval_lookback
-        self.train_lookback = train_lookback
-        self.learning_rate = learning_rate
-        self.criterion = criterion
-        if optimizer == 'LBFGS':
-            self.optimizer = optim.LBFGS(self.net.parameters(), lr=learning_rate)
-        elif optimizer == 'ADAM':
-            self.optimizer = optim.Adam(self.net.parameters(), lr=learning_rate, betas=(0.9, 0.999))
-        else:
-            raise ValueError('Optimizer not supported')
-        # self.lbfgs = optim.LBFGS(self.net.parameters(), lr=learning_rate, max_iter=10, max_eval=100)
-        # self.adam = optim.Adam(self.net.parameters(), lr=learning_rate, betas=(0.9, 0.999))
-        self.lscheduler = ExponentialLR(self.optimizer, gamma=0.9)
-        self.ascheduler = ExponentialLR(self.optimizer, gamma=0.999)
-        self.optim_name = optimizer
-        self.n_epoch = n_epoch
         self.is_learning = True
+        # self.early_stopper = EarlyStopper(patience=3, min_delta=10)
 
-    def fit_predict(self, X_, y_):
+    def prepare_X(self, X: Dataset, fit: bool, lookback:int) -> Tuple[torch.Tensor, DataArray]:
+        start_day = X.day.min().to_numpy().item()
+
+        X_pd = X[self.feature_name].to_dataframe(dim_order=['day', 'asset'])
+
+        ## Minmax scale except for the asset name (category)
+        X_pd[X_pd.columns] = self.preprocess.fit_transform(X_pd.values) if fit else self.preprocess.transform(
+            X_pd.values)
+        X_transformed = xr.Dataset.from_dataframe(X_pd)
+
+        # New data preprocessing with Xarray - Hooray!
+        X_list = []
+        for i in range(lookback):
+            X_slice = X_transformed.sel(
+                day=slice(start_day + i, start_day + i + self.per_eval_lookback - 1)).expand_dims(
+                batch=[start_day + i + self.per_eval_lookback - 1])
+            X_slice.coords['offset'] = X_slice.day - start_day - i  # calculate offset coordinate/index for each slice
+            X_slice_o = X_slice.swap_dims(
+                {'day': 'offset'})  # swap to make offset the dimension instead of the previous 'day'
+            X_list.append(X_slice_o.reset_coords(drop=True))  # (reset and) drop all non-index coordinates
+        X_concat = xr.concat(X_list, dim='batch')  # concat along the batch dimension
+        if self.embed_offset:
+            X_concat = X_concat.assign(offset_feature=X_concat.offset)
+        if self.embed_asset:
+            X_concat = X_concat.assign(asset_name=X_concat.asset)
+        # create a new batch dimension cartesian product all batch and asset
+        X_arr = (X_concat.stack({'batch_asset': ['batch', 'asset']}).to_array('feature')
+                 .transpose('batch_asset', 'offset', 'feature'))
+        X_arr_np = X_arr.to_numpy()
+
+        if self.net_name == 'CONV':
+            X_arr_np = X_arr_np[:, np.newaxis, :, :]
+
+        # then reshape into the desire form for NN (batch, seq_length, feature)
+        # batch_asset "is" a multi-index array, with the ordering of train_lookback, asset
+        X_tensor = torch.from_numpy(X_arr_np).to(torch.float)
+        return X_tensor, X_arr.batch_asset
+
+    def fit_predict(self, X: Dataset, y: DataArray):
         self.net.train()
-        X = xr.Dataset.from_dataframe(X_)
-        y = xr.DataArray.from_series(y_)
-        X_pd = X.to_dataframe(dim_order=['day', 'asset'])
-        X_transformed_pd = self.preprocess.fit_transform(X_pd)
-        X_transformed = xr.Dataset.from_dataframe(X_transformed_pd)
+        X_tensor, batch_asset = self.prepare_X(X, fit=True, lookback=self.train_lookback)
+        y_tensor = torch.from_numpy(y.stack({'batch_asset': ['day', 'asset']}).values).to(torch.float)
 
-        start_day = X_transformed.day.min().to_numpy().item()
-
-        X_ult = torch.cat([torch.from_numpy(
-            X_transformed.sel(day=slice(start_day + i, start_day + i + self.per_eval_lookback - 1))
-            .to_array(dim='feature').transpose('feature', 'day', 'asset')
-            .to_numpy()[np.newaxis, :]) for i in range(self.train_lookback)
-        ], dim=0).to(torch.float)
-        y_ult = torch.cat([torch.from_numpy(
-            y.sel(day=start_day + i + self.per_eval_lookback - 1)
-            .to_numpy()[np.newaxis, :]) for i in range(self.train_lookback)
-        ], dim=0).to(torch.float)
-
+        # LSTM or NN shape (batch, seq_length, feature)
         for epoch in range(self.n_epoch):
-            # print('its actually training')
-            def closure():
-                self.optimizer.zero_grad()
-                outputs = self.net(X_ult)
-                loss = self.criterion(outputs, y_ult)
-                loss.backward()
-                return loss
-
             self.optimizer.zero_grad()
-            outputs = self.net(X_ult)
-            loss = self.criterion(outputs, y_ult)
-            # print(loss)
+            outputs = self.net(X_tensor).squeeze()
+            loss = self.criterion(outputs, y_tensor)
             loss.backward()
-            if self.optim_name == 'LBFGS':
-                # if use_lbfgs:
-                self.optimizer.step(closure)  # need closure for LBFGS
-            else:
-                self.optimizer.step()
+            self.optimizer.step()
+            self.scheduler.step()
+        if X.day.max().to_numpy().item() >= 995 and not self.is_eval:  # save final model
+            dump_folder = '../../model/dump/' + str(date.today())
+            model_path = dump_folder + '/' + str(date.today()) + '_' + self.net_name
+            ensure_dir(dump_folder)
+            torch.save(self.net.state_dict(), model_path)
+            print('Final learning rate:', _get_lr(self.optimizer))
 
-        if self.optim_name == 'ADAM':
-            self.ascheduler.step()
-        else:
-            self.lscheduler.step()
-            # print(f'Epoch={epoch}, loss={cum_loss}')
-        return outputs.detach().numpy().reshape(-1, 1)[:, 0]
+        return xr.DataArray(data=outputs.detach().numpy(), coords=dict(batch_asset=batch_asset)).unstack(
+            'batch_asset').rename({'batch': 'day'})
 
     def predict(self, X):
         self.net.eval()
-        X_transformed = self.preprocess.transform(X)
-        X_np = X_transformed.swaplevel(1, 0).sort_index(ascending=True).to_numpy().astype(np.float32)
-        # shape (asset, days, feature) -> (ft, days, asset)
-        X_np_tensor = X_np.reshape(self.n_asset, self.per_eval_lookback, -1).transpose([2, 1, 0])
-        X_np_tensor = X_np_tensor[np.newaxis, :]  # add batch dimension
-        X_torch = torch.from_numpy(X_np_tensor)
-        y = self.net(X_torch)
-        # return np.clip(y.detach().numpy(), -0.2, 0.2)
-        return y.detach().numpy().reshape(-1, 1)[:, 0]
+        X_tensor, _ = self.prepare_X(X, fit=False, lookback=1)
+        y = self.net(X_tensor).squeeze()
+
+        return np.clip(y.detach().numpy(), -0.2, 0.2)[np.newaxis, :]  # return a numpy array
 
 
 class Test(TestCase):

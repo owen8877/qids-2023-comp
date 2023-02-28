@@ -56,6 +56,8 @@ def cross_validation(model: ModelLike, feature_columns: Strings, ds: Dataset = N
         dataset = pipeline.Dataset.load(f'{__file__}/../data/parsed')
         ds = Dataset.from_dataframe(pd.concat([dataset.fundamental, dataset.ref_return], axis=1).dropna())
 
+    assert not ds[return_column].isnull().any().item(), 'Input return column contains NaN; maybe truncate to day 998?'
+
     # TODO: refactor check dataset code
     # check_dataframe(ds, expect_index=['day', 'asset'], expect_feature=feature_columns + [return_column])
     assert {'day', 'asset'}.issubset(set(ds.dims.keys()))
@@ -66,7 +68,6 @@ def cross_validation(model: ModelLike, feature_columns: Strings, ds: Dataset = N
     val_start_day = (2 + start_day) if train_lookback is None else (per_eval_lookback + train_lookback + start_day)
     pbar = trange(val_start_day, end_day + 1)
     # pbar = trange(val_start_day, end_day - 1) # the last two days have no proper return
-
 
     performance = Performance()
     coords = ds.sel(day=slice(val_start_day, end_day)).coords
@@ -93,7 +94,6 @@ def cross_validation(model: ModelLike, feature_columns: Strings, ds: Dataset = N
         y_val_true = ds[return_column].sel(day=days_val[per_eval_lookback - 1:])
         # y_val_true.reindex(day=y_val_true.day[::-1]) ## for LSTM??
         y_val_prediction = DataArray(data=model.predict(X_val), coords=y_val_true.coords)
-
 
         cum_y_val_true.loc[dict(day=val_index)] = y_val_true.sel(day=val_index)
         cum_y_val_prediction.loc[dict(day=val_index)] = y_val_prediction.sel(day=val_index)
@@ -241,8 +241,6 @@ def evaluation_for_submission(model: ModelLike, given_ds: Dataset, qids: QIDS, l
         performance[current_day, 'train_r2'] = train_r2
         if before2_day > N_train_days:
             return_forecast_pred = ds['return_pred'].sel(day=before2_day)
-            # print(return_forecast_true.to_series())
-            # print(return_forecast_pred.to_series())
             test_r2 = r2_score(return_forecast_true.to_series(), return_forecast_pred.to_series())
             performance[before2_day, 'test_r2'] = test_r2
             test_pearson = return_forecast_true.to_series().corr(return_forecast_pred.to_series())

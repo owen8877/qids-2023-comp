@@ -56,6 +56,8 @@ def cross_validation(model: ModelLike, feature_columns: Strings, ds: Dataset = N
         dataset = pipeline.Dataset.load(f'{__file__}/../data/parsed')
         ds = Dataset.from_dataframe(pd.concat([dataset.fundamental, dataset.ref_return], axis=1).dropna())
 
+    assert not ds[return_column].isnull().any().item(), 'Input return column contains NaN; maybe truncate to day 998?'
+
     # TODO: refactor check dataset code
     # check_dataframe(ds, expect_index=['day', 'asset'], expect_feature=feature_columns + [return_column])
     assert {'day', 'asset'}.issubset(set(ds.dims.keys()))
@@ -67,11 +69,11 @@ def cross_validation(model: ModelLike, feature_columns: Strings, ds: Dataset = N
     pbar = trange(val_start_day, end_day + 1)
     # pbar = trange(val_start_day, end_day - 1) # the last two days have no proper return
 
-
     performance = Performance()
     coords = ds.sel(day=slice(val_start_day, end_day)).coords
-    cum_y_val_prediction = DataArray(np.nan, coords=coords)
-    cum_y_val_true = DataArray(np.nan, coords=coords)
+    sub_coords = {k: coords.get(k) for k in ('day', 'asset')}
+    cum_y_val_prediction = DataArray(np.nan, dims=['day', 'asset'], coords=sub_coords)
+    cum_y_val_true = DataArray(np.nan, dims=['day', 'asset'], coords=sub_coords)
 
     for val_index in pbar:
         days_train = np.arange(start_day if train_lookback is None else
@@ -92,7 +94,6 @@ def cross_validation(model: ModelLike, feature_columns: Strings, ds: Dataset = N
         y_val_true = ds[return_column].sel(day=days_val[per_eval_lookback - 1:])
         # y_val_true.reindex(day=y_val_true.day[::-1]) ## for LSTM??
         y_val_prediction = DataArray(data=model.predict(X_val), coords=y_val_true.coords)
-
 
         cum_y_val_true.loc[dict(day=val_index)] = y_val_true.sel(day=val_index)
         cum_y_val_prediction.loc[dict(day=val_index)] = y_val_prediction.sel(day=val_index)
@@ -140,12 +141,10 @@ class AugmentationOption:
             self,
             return_lookback: int = 2,
             market_return: bool = False, market_return_lookback: int = 5,
-            quantization: bool = False,
     ):
         self.return_lookback = return_lookback
         self.market_return = market_return
         self.market_return_lookback = market_return_lookback
-        self.quantization = quantization
 
 
 def evaluation_for_submission(model: ModelLike, given_ds: Dataset, qids: QIDS, lookback_window: Union[int, None] = 200,
@@ -155,10 +154,11 @@ def evaluation_for_submission(model: ModelLike, given_ds: Dataset, qids: QIDS, l
     Assuming no additional features except the fundamental data and extracted market data.
     """
     N_total = N_train_days + N_test_days
-    more_ds = Dataset(data_vars={k: np.nan for k in given_ds.data_vars},
+    more_ds = Dataset(data_vars={k: np.nan for k in given_ds.data_vars if k != 'market_share'},
                       coords=dict(day=range(N_train_days + 1, N_total + 1), asset=range(N_asset),
                                   timeslot=range(1, N_timeslot + 1)))
     ds: Dataset = xr.combine_by_coords([given_ds, more_ds])
+    ds['market_share'] = given_ds['market_share']
 
     if option is None:
         option = AugmentationOption()
@@ -215,6 +215,11 @@ def evaluation_for_submission(model: ModelLike, given_ds: Dataset, qids: QIDS, l
         for i in range(1, option.return_lookback + 1):
             ds[f'return_{i}'].loc[dict(day=current_day)] = ds[f'return_{i - 1}'].sel(day=before1_day)
 
+        _d_ = dict(day=current_day)
+        for p_f, f in ('b', 'book'), ('e_ttm', 'earnings_ttm'), ('e', 'earnings'), ('s', 'sales'), ('cf', 'cashflow'):
+            ds[f].loc[_d_] = ds['close_0'].loc[_d_] / ds[f'p{p_f}'].loc[_d_]
+        ds['market_cap'].loc[_d_] = ds['close_0'].sel(day=current_day) * ds['market_share']
+
         # Train the model on what we already have
         days_train = range(1 if lookback_window is None else (current_day - per_eval_lookback - lookback_window),
                            before1_day)
@@ -236,8 +241,6 @@ def evaluation_for_submission(model: ModelLike, given_ds: Dataset, qids: QIDS, l
         performance[current_day, 'train_r2'] = train_r2
         if before2_day > N_train_days:
             return_forecast_pred = ds['return_pred'].sel(day=before2_day)
-            # print(return_forecast_true.to_series())
-            # print(return_forecast_pred.to_series())
             test_r2 = r2_score(return_forecast_true.to_series(), return_forecast_pred.to_series())
             performance[before2_day, 'test_r2'] = test_r2
             test_pearson = return_forecast_true.to_series().corr(return_forecast_pred.to_series())

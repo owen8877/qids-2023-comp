@@ -153,22 +153,22 @@ class oneDVerConvNet(CUDAModule):
         self.activation = nn.ReLU() if activation == 'relu' else nn.Tanh()
         self.layer1 = nn.Sequential(
             nn.Conv2d(D_in, 16, (3, 1), stride=(1, 1), padding=(1, 0)),
-            # nn.BatchNorm2d(16), # no batch
+            nn.BatchNorm2d(16), # no batch
             self.activation,
             nn.MaxPool2d(kernel_size=(2, 1), stride=(2, 1)))
         self.layer2 = nn.Sequential(
             nn.Conv2d(16, 64, kernel_size=(3, 1), stride=(1, 1), padding=(1, 0)),
-            # nn.BatchNorm2d(64),
+            nn.BatchNorm2d(64),
             self.activation,
             nn.MaxPool2d(kernel_size=(2, 1), stride=(2, 1)))
         self.layer3 = nn.Sequential(
             nn.Conv2d(64, 256, kernel_size=(3, 1), stride=(1, 1), padding=(1, 0)),
-            # nn.BatchNorm2d(256),
+            nn.BatchNorm2d(256),
             self.activation,
             nn.MaxPool2d(kernel_size=(2, 1), stride=(2, 1)))
         self.layer4 = nn.Sequential(
             nn.Conv2d(256, 1024, kernel_size=(3, 1), stride=(1, 1), padding=(1, 0)),
-            # nn.BatchNorm2d(1024),
+            nn.BatchNorm2d(1024),
             self.activation,
             nn.MaxPool2d(kernel_size=(2, 1), stride=(2, 1)))
         self.drop_out = nn.Dropout()
@@ -398,11 +398,15 @@ class NN_wrapper:
         self.embed_offset = embed_offset
 
         # Define the optimizier
-        self.optimizer = optim.Adam(self.net.parameters(), lr=lr, betas=(0.9, 0.999))
+        ## optimizer with L2-regularization
+        self.optimizer = optim.Adam(self.net.parameters(), lr=lr, betas=(0.9, 0.999), weight_decay=1e-5)
+        ## original optimizer
+        # self.optimizer = optim.Adam(self.net.parameters(), lr=lr, betas=(0.9, 0.999))
+
         # self.scheduler = optim.lr_scheduler.CyclicLR(self.optimizer, base_lr=lr / 10, max_lr=lr,
         #                                              step_size_up=n_epoch // 2, cycle_momentum=False)
         if lr_scheduler_constructor is None:
-            self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=100, gamma=0.5)
+            self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=100000, gamma=0.5)
         else:
             self.scheduler = lr_scheduler_constructor(self.optimizer)
 
@@ -458,11 +462,26 @@ class NN_wrapper:
             self.optimizer.zero_grad()
             outputs = self.net(X_tensor).squeeze()
             loss = self.criterion(outputs, y_tensor)
+            if epoch == 1:
+                 print('training loss:', loss.item())
+
+            ## add L1 regularization
+#             l1_lambda = 0.001
+#             l1_norm = sum(torch.linalg.norm(p, 1) for p in self.net.parameters())
+
+#             loss += l1_lambda * l1_norm
+
+            ## check parameter values
+            # print(list(self.net.parameters()))
+
+            ## check parameter name and require_grad
+            # for name, param in self.net.named_parameters():
+            #     print(name, param.requires_grad)
             loss.backward()
             self.optimizer.step()
             self.scheduler.step()
-        if X.day.max().to_numpy().item() >= 995 and not self.is_eval:  # save final model
-            dump_folder = '../../model/dump/' + str(date.today())
+        if X.day.max().to_numpy().item() >= 994 and not self.is_eval:  # save final model
+            dump_folder = 'model/dump/' + str(date.today())
             model_path = dump_folder + '/' + str(date.today()) + '_' + self.net_name
             ensure_dir(dump_folder)
             torch.save(self.net.state_dict(), model_path)
@@ -476,8 +495,8 @@ class NN_wrapper:
         X_tensor, _ = self.prepare_X(X, fit=False, lookback=1)
         y = self.net(X_tensor).squeeze()
 
-        return np.clip(y.detach().numpy(), -0.2, 0.2)[np.newaxis, :]  # return a numpy array
-
+        # return np.clip(y.detach().numpy(), -0.2, 0.2)[np.newaxis, :]  # return a numpy array
+        return y.detach().numpy()[np.newaxis, :] # for predicting correlation
 
 class Test(TestCase):
     def test_nn(self):

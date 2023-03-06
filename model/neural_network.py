@@ -17,6 +17,7 @@ import xarray as xr
 from xarray import Dataset, DataArray
 
 from util import ensure_dir
+from torchmetrics import PearsonCorrCoef
 
 idx = pd.IndexSlice
 
@@ -344,12 +345,24 @@ def _get_lr(optimizer):
         return param_group['lr']
 
 
+
+
+class Neg_Pearson_Loss(nn.Module):
+    def __init__(self) -> None:
+        super(Neg_Pearson_Loss, self).__init__( )
+
+    def forward(self, pred, target):
+        # loss_without_reduction = max(0, −target * (input1 − input2) + margin)
+        pearson = PearsonCorrCoef()
+        return -pearson(pred.squeeze(), target.squeeze())
+
+
 class NN_wrapper:
     def __init__(
             self, preprocess, lr=0.001, criterion=nn.MSELoss(), n_epoch=5, train_lookback=32, per_eval_lookback=16,
             n_asset=54, hidden_size=64, lr_scheduler_constructor: Optional[Callable] = None, network='LSTM',
             is_eval: bool = False, feature_name=None, load_model_path=None, is_cuda=True,
-            embed_offset: bool = False, embed_asset: bool = False,
+            embed_offset: bool = False, embed_asset: bool = False, l2_weight=1e-5, l1_weight=0
     ):
         if feature_name is None:
             raise ValueError('Please provide a list of feature')
@@ -389,7 +402,12 @@ class NN_wrapper:
         self.feature_name = feature_name
         self.feature_to_nn = feature_to_nn
         self.n_epoch = n_epoch
-        self.criterion = criterion
+
+        if criterion == 'pearson':
+            self.criterion = Neg_Pearson_Loss()
+        else:
+            self.criterion = criterion
+
         self.train_lookback = train_lookback
         self.per_eval_lookback = per_eval_lookback
         self.n_asset = n_asset
@@ -397,9 +415,11 @@ class NN_wrapper:
         self.embed_asset = embed_asset
         self.embed_offset = embed_offset
 
+        self.l1_weight = l1_weight
+
         # Define the optimizier
         ## optimizer with L2-regularization
-        self.optimizer = optim.Adam(self.net.parameters(), lr=lr, betas=(0.9, 0.999), weight_decay=1e-5)
+        self.optimizer = optim.Adam(self.net.parameters(), lr=lr, betas=(0.9, 0.999), weight_decay=l2_weight)
         ## original optimizer
         # self.optimizer = optim.Adam(self.net.parameters(), lr=lr, betas=(0.9, 0.999))
 
@@ -466,10 +486,9 @@ class NN_wrapper:
                  print('training loss:', loss.item())
 
             ## add L1 regularization
-#             l1_lambda = 0.001
-#             l1_norm = sum(torch.linalg.norm(p, 1) for p in self.net.parameters())
-
-#             loss += l1_lambda * l1_norm
+            if self.l1_weight>0:
+                l1_norm = sum(torch.linalg.norm(p, 1) for p in self.net.parameters())
+                loss += self.l1_weight * l1_norm
 
             ## check parameter values
             # print(list(self.net.parameters()))
@@ -477,6 +496,7 @@ class NN_wrapper:
             ## check parameter name and require_grad
             # for name, param in self.net.named_parameters():
             #     print(name, param.requires_grad)
+
             loss.backward()
             self.optimizer.step()
             self.scheduler.step()

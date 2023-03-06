@@ -148,7 +148,7 @@ class AugmentationOption:
 
 
 def evaluation_for_submission(model: ModelLike, given_ds: Dataset, qids: QIDS, lookback_window: Union[int, None] = 200,
-                              per_eval_lookback: int = 1, option: AugmentationOption = None) -> Performance:
+                              per_eval_lookback: int = 1, option: AugmentationOption = None) -> Tuple[Performance, Series] :
     """
     Evaluate the given model on the test dataset for submission.
     Assuming no additional features except the fundamental data and extracted market data.
@@ -256,7 +256,7 @@ def evaluation_for_submission(model: ModelLike, given_ds: Dataset, qids: QIDS, l
             pbar.set_description(f'Day {current_day}, train r2={train_r2:.4f}, test cum r2={test_cum_r2:.4f}, '
                                  f'test cum pearson {test_cum_pearson:.4f}')
 
-    return performance
+    return performance, ds['return_pred'].to_series().iloc[1000*54:].reset_index()
 
 
 class Test(TestCase):
@@ -339,7 +339,7 @@ class Test(TestCase):
         qids = QIDS(path_prefix='../')
         # qids = None
         model = SimpleLinearModel(feature)
-        performance = evaluation_for_submission(model, dataset=dataset, qids=qids, lookback_window=200,
+        performance,_ = evaluation_for_submission(model, dataset=dataset, qids=qids, lookback_window=200,
                                                 option=AugmentationOption(market_return=True))
 
         plt.figure()

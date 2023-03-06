@@ -372,6 +372,17 @@ def calculate_market_return(return_0: DataArray, weight: Optional[np.ndarray] = 
 
     return market_return.rename(f'market_return_0')
 
+def generate_sbumission(pred: Series, filename: str) -> None:
+    """
+    generate csv for Kaggle submission
+    :param pred: input prediction from eval_to_submission; contain columns 'day' 'asset' and 'return_pred'
+    :param filename: path to the saved file
+    :return:
+    """
+    pred['date_time'] = 's' + pred['asset'].astype(str) + 'd' + pred['day'].astype(str)
+    pred = pred.drop(['day', 'asset'], axis=1).rename(columns={'return_pred': 'return'})
+    pred = pred[['date_time', 'return']]
+    pred.to_csv(filename, index=False)
 
 class Test(TestCase):
     def test_export_extract_market(self):

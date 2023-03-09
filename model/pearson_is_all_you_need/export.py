@@ -19,6 +19,7 @@ export_notebook(__file__, files_to_concat=[
     RegexModifierFilter(r'^from qids_lib import QIDS', 'from qids_package.qids import make_env'),
     RegexModifierFilter(r'qids: QIDS', 'qids'),
     RegexModifierFilter(r'QIDS\(path_prefix=qids_path_prefix\)', 'make_env()'),
+    RegexModifierFilter(r'qids = QIDS.*', r'from qids_package import qids'),
 
     # Backtest
     RegexModifierFilter(r'isinstance\(model, SupportsPredict\)', 'not callable(model)'),
@@ -26,9 +27,8 @@ export_notebook(__file__, files_to_concat=[
     RegexModifierFilter(r"f'{path_prefix}/{PARSED_PATH}'.*$", r"'/kaggle/working/parsed'"),
     RegexModifierFilter(r"f'{path_prefix}/{RAW_PATH}'.*$",
                         r"'/kaggle/input/hku-qids-2023-quantitative-investment-competition'"),
-    RegexModifierFilter(r'pipeline.Dataset', 'Dataset'),
-    RegexModifierFilter(r"Dataset.load\('../data/parsed'\)", "Dataset.load('/kaggle/working/parsed')"),
 
-    # Dump dataset before evaluation
-    # InsertionFilter(['_dump(is_mini=False)'], apply_when=1)
+    # Dataset
+    RegexModifierFilter(r"'../../data/nc'", r"'/kaggle/working/data/nc'"),
+    RegexModifierFilter(r'n_days=-1\)', r'n_days=-1, path_prefix="/kaggle/working")'),
 ], filter_debug=False, clip=True)

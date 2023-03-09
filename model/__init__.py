@@ -100,25 +100,42 @@ class InsertionFilter(AbstractFilter):
         return f'InsertionFilter(lines=(omitted), n_invoked={self.n_invoked}, apply_when={self.apply_when})'
 
 
+def cluster_lines_by_pun_signs(lines, puns_needed: int = 5):
+    clusters = []
+    holder = []
+    puns = '#' * puns_needed
+    for line in lines:
+        line: str
+        if line.startswith(puns):
+            clusters.append(holder)
+            holder = []
+        holder.append(line)
+    clusters.append(holder)
+    return clusters
+
+
 def export_notebook(module_file_name: str, files_to_concat: Iterable[str], filters: Optional[Iterable[AbstractFilter]],
-                    path_prefix: str = '../..', filter_debug: bool = False, clip: bool = True):
+                    path_prefix: str = '../..', filter_debug: bool = False, clip: bool = True, puns_needed: int = 5):
     name = parse_module_name(module_file_name)
     model_file = f'model/{name}/__init__.py'
 
     export_prefix = f'{path_prefix}/model/{name}/export'
     ensure_dir(export_prefix)
     files_to_iterate = files_to_concat, (model_file,)
+    cells = []
     for i, paths in enumerate(files_to_iterate):
         content = read_lines_from(paths, path_prefix)
         if filters is not None:
             for filter in filters:
                 content = filter(content, filter_debug)
+        cells.extend(cluster_lines_by_pun_signs(content, puns_needed))
+    for j, cell in enumerate(cells):
         if clip:
-            pyperclip.copy('\n'.join(content))
+            pyperclip.copy('\n'.join(cell))
             pyperclip.paste()
-            input(f'The {i + 1}-th cell has been copied to clipboard...'
-                  'Press enter ' + ('for the next one:' if i + 1 < len(files_to_iterate) else 'to end.'))
-        export_to(i + 1, content, export_prefix)
+            input(f'The {j + 1}-th cell has been copied to clipboard...'
+                  'Press enter ' + ('for the next one:' if j + 1 < len(files_to_iterate) else 'to end.'))
+        export_to(j + 1, cell, export_prefix)
 
 
 class Test(TestCase):

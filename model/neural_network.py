@@ -544,9 +544,9 @@ class NN_wrapper:
 
         if X.day.max().to_numpy().item() >= 994 and not self.is_eval:  # save final model
             dump_folder = 'model/dump/' + str(date.today())
-            model_path = dump_folder + '/' + str(date.today()) + '_' + self.net_name
+            self.model_path = dump_folder + '/' + str(date.today()) + '_' + self.net_name
             ensure_dir(dump_folder)
-            torch.save(self.net.state_dict(), model_path)
+            torch.save(self.net.state_dict(), self.model_path)
             print('Final learning rate:', _get_lr(self.optimizer))
 
         return xr.DataArray(data=outputs.detach().numpy(), coords=dict(batch_asset=batch_asset)).unstack(

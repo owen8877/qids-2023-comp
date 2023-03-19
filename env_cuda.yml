@@ -21,3 +21,4 @@ dependencies:
   - cudatoolkit>=11.7
   - xarray
   - pyperclip
+  - torchmetrics

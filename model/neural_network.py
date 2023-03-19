@@ -17,6 +17,7 @@ import xarray as xr
 from xarray import Dataset, DataArray
 
 from util import ensure_dir
+from torchmetrics import PearsonCorrCoef
 
 idx = pd.IndexSlice
 
@@ -153,7 +154,7 @@ class oneDVerConvNet(CUDAModule):
         self.activation = nn.ReLU() if activation == 'relu' else nn.Tanh()
         self.layer1 = nn.Sequential(
             nn.Conv2d(D_in, 16, (3, 1), stride=(1, 1), padding=(1, 0)),
-            nn.BatchNorm2d(16), # no batch
+            nn.BatchNorm2d(16),  # no batch
             self.activation,
             nn.MaxPool2d(kernel_size=(2, 1), stride=(2, 1)))
         self.layer2 = nn.Sequential(
@@ -242,6 +243,13 @@ class Transformer(CUDAModule):
             self.asset_name_indx = feature.index('asset_name')
         else:
             self.is_asset_embed = False
+
+        if 'season_day' in feature:
+            self.is_season_embed = True
+            self.season_embed = nn.Embedding(65, 8)
+            self.embed_feature_dim += 7
+            self.season_day_indx = feature.index('season_day')
+
         print('embedding feature dimension is', self.embed_feature_dim)
 
         self.linear_1 = nn.Linear(self.embed_feature_dim, self.hidden_size)
@@ -275,6 +283,11 @@ class Transformer(CUDAModule):
             asset_name = F.one_hot(asset_name.long(), 54)
             indx_remain_bool *= (columns_indx != self.asset_name_indx)
 
+        if self.is_season_embed:
+            season_day = x[:, :, self.season_day_indx].long()
+            season_day = self.season_embed(season_day)
+            indx_remain_bool *= (columns_indx != self.season_day_indx)
+
         # print('remain indices:', columns_indx[indx_remain_bool.long()==1])
 
         # get data out except for embedded ones
@@ -284,6 +297,8 @@ class Transformer(CUDAModule):
             x = torch.cat((x, day_feature), dim=-1)
         if self.is_asset_embed:
             x = torch.cat((x, asset_name), dim=-1)
+        if self.is_season_embed:
+            x = torch.cat((x, season_day), dim=-1)
 
         # print(x.shape) # (432, 4, 71)
 
@@ -344,12 +359,47 @@ def _get_lr(optimizer):
         return param_group['lr']
 
 
+class Neg_Pearson_Loss(nn.Module):
+    def __init__(self) -> None:
+        super(Neg_Pearson_Loss, self).__init__()
+
+    def forward(self, pred, target):
+        # loss_without_reduction = max(0, −target * (input1 − input2) + margin)
+        pearson = PearsonCorrCoef()
+        return -pearson(pred.squeeze(), target.squeeze())
+
+
+class MonStEr_Loss(nn.Module):
+    def __int__(self) -> None:
+        super(MonStEr_Loss, self).__int__()
+
+    def forward(self, pred_, target_):
+        pred = pred_/0.2
+        target = target_/0.2
+        loss = 0
+        # is_tar_pos = target >= 0
+        # is_pred_ge_tar = pred >= target
+
+        is_dir_correct= torch.sign(pred-target) == torch.sign(target)
+        # print(target.max())
+        loss += torch.sum(is_dir_correct*(1/(1+0.1*torch.abs(target)))*torch.abs(pred-target)\
+             + (~is_dir_correct)*torch.pow(torch.abs(target - pred), 1+4*torch.abs(target)))
+
+
+        # loss += torch.sum(is_tar_pos * is_pred_ge_tar * (1 / (1 + 4 * target) * (pred - target)) \
+        #         + is_tar_pos * (~is_pred_ge_tar) * torch.pow(target - pred, 1 + target) \
+        #         + (~is_tar_pos) * is_pred_ge_tar * torch.pow(target - pred, 1 - target) \
+        #         + (~is_tar_pos) * (~is_pred_ge_tar) * (1 / (1 + 4 * target) * (target - pred)))
+
+        return loss
+
+
 class NN_wrapper:
     def __init__(
             self, preprocess, lr=0.001, criterion=nn.MSELoss(), n_epoch=5, train_lookback=32, per_eval_lookback=16,
             n_asset=54, hidden_size=64, lr_scheduler_constructor: Optional[Callable] = None, network='LSTM',
-            is_eval: bool = False, feature_name=None, load_model_path=None, is_cuda=True,
-            embed_offset: bool = False, embed_asset: bool = False,
+            is_eval: bool = False, feature_name=None, load_model_path=None, is_cuda=True, embed_season: bool = False,
+            embed_offset: bool = False, embed_asset: bool = False, l2_weight=1e-5, l1_weight=0, var_weight=0
     ):
         if feature_name is None:
             raise ValueError('Please provide a list of feature')
@@ -389,17 +439,32 @@ class NN_wrapper:
         self.feature_name = feature_name
         self.feature_to_nn = feature_to_nn
         self.n_epoch = n_epoch
-        self.criterion = criterion
+
+        if criterion == 'pearson':
+            self.criterion = Neg_Pearson_Loss()
+        elif criterion == 'monster':
+            self.criterion = MonStEr_Loss()
+        elif criterion == 'combined':
+            self.criterion = 'combined'
+        else:
+            self.criterion = criterion
+
         self.train_lookback = train_lookback
         self.per_eval_lookback = per_eval_lookback
         self.n_asset = n_asset
         self.net_name = network
         self.embed_asset = embed_asset
         self.embed_offset = embed_offset
+        self.embed_season = embed_season
+
+        # regularization parameter
+        self.l1_weight = l1_weight
+        self.var_weight = var_weight
 
         # Define the optimizier
         ## optimizer with L2-regularization
-        self.optimizer = optim.Adam(self.net.parameters(), lr=lr, betas=(0.9, 0.999), weight_decay=1e-5)
+        self.optimizer = optim.Adam(self.net.parameters(), lr=lr, betas=(0.9, 0.999), weight_decay=l2_weight)
+
         ## original optimizer
         # self.optimizer = optim.Adam(self.net.parameters(), lr=lr, betas=(0.9, 0.999))
 
@@ -414,7 +479,7 @@ class NN_wrapper:
         self.is_learning = True
         # self.early_stopper = EarlyStopper(patience=3, min_delta=10)
 
-    def prepare_X(self, X: Dataset, fit: bool, lookback:int) -> Tuple[torch.Tensor, DataArray]:
+    def prepare_X(self, X: Dataset, fit: bool, lookback: int) -> Tuple[torch.Tensor, DataArray]:
         start_day = X.day.min().to_numpy().item()
 
         X_pd = X[self.feature_name].to_dataframe(dim_order=['day', 'asset'])
@@ -434,11 +499,16 @@ class NN_wrapper:
             X_slice_o = X_slice.swap_dims(
                 {'day': 'offset'})  # swap to make offset the dimension instead of the previous 'day'
             X_list.append(X_slice_o.reset_coords(drop=True))  # (reset and) drop all non-index coordinates
+
         X_concat = xr.concat(X_list, dim='batch')  # concat along the batch dimension
         if self.embed_offset:
             X_concat = X_concat.assign(offset_feature=X_concat.offset)
         if self.embed_asset:
             X_concat = X_concat.assign(asset_name=X_concat.asset)
+        if self.embed_season:
+            X_concat = X_concat.assign(season_day=X_concat.day)
+            X_concat['season_day'] = X_concat['season_day'] % 65
+
         # create a new batch dimension cartesian product all batch and asset
         X_arr = (X_concat.stack({'batch_asset': ['batch', 'asset']}).to_array('feature')
                  .transpose('batch_asset', 'offset', 'feature'))
@@ -461,15 +531,25 @@ class NN_wrapper:
         for epoch in range(self.n_epoch):
             self.optimizer.zero_grad()
             outputs = self.net(X_tensor).squeeze()
-            loss = self.criterion(outputs, y_tensor)
+
+            if self.criterion == 'combined':
+                mse_loss = nn.MSELoss()
+                pearson_loss = Neg_Pearson_Loss()
+                loss = 0.1*mse_loss(outputs, y_tensor) + pearson_loss(outputs, y_tensor)
+            else:
+                loss = self.criterion(outputs, y_tensor)
+
             if epoch == 1:
-                 print('training loss:', loss.item())
+                print('training loss:', loss.item())
 
             ## add L1 regularization
-#             l1_lambda = 0.001
-#             l1_norm = sum(torch.linalg.norm(p, 1) for p in self.net.parameters())
+            if self.l1_weight > 0:
+                l1_norm = sum(torch.linalg.norm(p, 1) for p in self.net.parameters())
+                loss += self.l1_weight * l1_norm
 
-#             loss += l1_lambda * l1_norm
+            if self.var_weight > 0 and isinstance(self.criterion, nn.MSELoss):
+                # print('variance is computed')
+                loss += self.var_weight * torch.abs(torch.var(outputs) - torch.var(y_tensor))
 
             ## check parameter values
             # print(list(self.net.parameters()))
@@ -477,9 +557,11 @@ class NN_wrapper:
             ## check parameter name and require_grad
             # for name, param in self.net.named_parameters():
             #     print(name, param.requires_grad)
+
             loss.backward()
             self.optimizer.step()
             self.scheduler.step()
+
         if X.day.max().to_numpy().item() >= 994 and not self.is_eval:  # save final model
             dump_folder = 'model/dump/' + str(date.today())
             model_path = dump_folder + '/' + str(date.today()) + '_' + self.net_name
@@ -494,9 +576,9 @@ class NN_wrapper:
         self.net.eval()
         X_tensor, _ = self.prepare_X(X, fit=False, lookback=1)
         y = self.net(X_tensor).squeeze()
-
         # return np.clip(y.detach().numpy(), -0.2, 0.2)[np.newaxis, :]  # return a numpy array
-        return y.detach().numpy()[np.newaxis, :] # for predicting correlation
+        return y.detach().numpy()[np.newaxis, :]  # for predicting correlation
+
 
 class Test(TestCase):
     def test_nn(self):
@@ -540,3 +622,14 @@ class Test(TestCase):
         plot_performance(performance, metrics_selected=['train_r2', 'val_cum_r2', 'val_cum_pearson'])
         plt.ylim([-0.15, 0.1])
         plt.show()
+
+    def test_monster(self):
+        import torch
+
+        a=torch.rand(10)
+        b=torch.rand(10)
+        criterion = MonStEr_Loss()
+        loss = criterion(a,b)
+        print(a,'\n')
+        print(b, '\n')
+        print(loss)

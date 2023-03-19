@@ -243,6 +243,13 @@ class Transformer(CUDAModule):
             self.asset_name_indx = feature.index('asset_name')
         else:
             self.is_asset_embed = False
+
+        if 'season_day' in feature:
+            self.is_season_embed = True
+            self.season_embed = nn.Embedding(65, 8)
+            self.embed_feature_dim += 7
+            self.season_day_indx = feature.index('season_day')
+
         print('embedding feature dimension is', self.embed_feature_dim)
 
         self.linear_1 = nn.Linear(self.embed_feature_dim, self.hidden_size)
@@ -276,6 +283,11 @@ class Transformer(CUDAModule):
             asset_name = F.one_hot(asset_name.long(), 54)
             indx_remain_bool *= (columns_indx != self.asset_name_indx)
 
+        if self.is_season_embed:
+            season_day = x[:, :, self.season_day_indx].long()
+            season_day = self.season_embed(season_day)
+            indx_remain_bool *= (columns_indx != self.season_day_indx)
+
         # print('remain indices:', columns_indx[indx_remain_bool.long()==1])
 
         # get data out except for embedded ones
@@ -285,6 +297,8 @@ class Transformer(CUDAModule):
             x = torch.cat((x, day_feature), dim=-1)
         if self.is_asset_embed:
             x = torch.cat((x, asset_name), dim=-1)
+        if self.is_season_embed:
+            x = torch.cat((x, season_day), dim=-1)
 
         # print(x.shape) # (432, 4, 71)
 
@@ -384,7 +398,7 @@ class NN_wrapper:
     def __init__(
             self, preprocess, lr=0.001, criterion=nn.MSELoss(), n_epoch=5, train_lookback=32, per_eval_lookback=16,
             n_asset=54, hidden_size=64, lr_scheduler_constructor: Optional[Callable] = None, network='LSTM',
-            is_eval: bool = False, feature_name=None, load_model_path=None, is_cuda=True,
+            is_eval: bool = False, feature_name=None, load_model_path=None, is_cuda=True, embed_season: bool = False,
             embed_offset: bool = False, embed_asset: bool = False, l2_weight=1e-5, l1_weight=0, var_weight=0
     ):
         if feature_name is None:
@@ -441,6 +455,7 @@ class NN_wrapper:
         self.net_name = network
         self.embed_asset = embed_asset
         self.embed_offset = embed_offset
+        self.embed_season = embed_season
 
         # regularization parameter
         self.l1_weight = l1_weight
@@ -484,11 +499,16 @@ class NN_wrapper:
             X_slice_o = X_slice.swap_dims(
                 {'day': 'offset'})  # swap to make offset the dimension instead of the previous 'day'
             X_list.append(X_slice_o.reset_coords(drop=True))  # (reset and) drop all non-index coordinates
+
         X_concat = xr.concat(X_list, dim='batch')  # concat along the batch dimension
         if self.embed_offset:
             X_concat = X_concat.assign(offset_feature=X_concat.offset)
         if self.embed_asset:
             X_concat = X_concat.assign(asset_name=X_concat.asset)
+        if self.embed_season:
+            X_concat = X_concat.assign(season_day=X_concat.day)
+            X_concat['season_day'] = X_concat['season_day'] % 65
+
         # create a new batch dimension cartesian product all batch and asset
         X_arr = (X_concat.stack({'batch_asset': ['batch', 'asset']}).to_array('feature')
                  .transpose('batch_asset', 'offset', 'feature'))
@@ -556,7 +576,6 @@ class NN_wrapper:
         self.net.eval()
         X_tensor, _ = self.prepare_X(X, fit=False, lookback=1)
         y = self.net(X_tensor).squeeze()
-
         # return np.clip(y.detach().numpy(), -0.2, 0.2)[np.newaxis, :]  # return a numpy array
         return y.detach().numpy()[np.newaxis, :]  # for predicting correlation
 

@@ -12,7 +12,7 @@ def calculate_fundamental_v0(ds: Dataset):
     cashflow = ds['close_0'] / ds['pcf']
 
     market_share_history = ds['volume'].sum('timeslot') / ds['turnoverRatio']
-    market_share = market_share_history.sel(day=slice(990, 1000)).median(dim='day') / 1e8
+    market_share = market_share_history.isel(day=slice(-10, -1)).median(dim='day') / 1e8
     market_cap = market_share * ds['close_0']
 
     return Dataset(data_vars={
@@ -29,6 +29,15 @@ def calculate_fundamental_v0(ds: Dataset):
 class Test(TestCase):
     def test_export_fundamental_v0(self):
         path = '../data/nc'
+        base_ds = xr.open_dataset(f'{path}/base.nc')
+        market_brief_ds = xr.open_dataset(f'{path}/market_brief.nc')
+        ds = base_ds.merge(market_brief_ds)
+
+        fundamental_ds = calculate_fundamental_v0(ds)
+        fundamental_ds.to_netcdf(f'{path}/fundamental_v0.nc')
+
+    def test_export_fundamental_v0_2round(self):
+        path = '../data/nc_2round'
         base_ds = xr.open_dataset(f'{path}/base.nc')
         market_brief_ds = xr.open_dataset(f'{path}/market_brief.nc')
         ds = base_ds.merge(market_brief_ds)

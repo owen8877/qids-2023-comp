@@ -1,7 +1,7 @@
 import pandas as pd
 
-TEST_MARKET_PATH = 'data/raw/first_round_test_market_data.csv'
-TEST_FUNADMENTAL_PATH = 'data/raw/first_round_test_fundamental_data.csv'
+TEST_MARKET_PATH = '../data/raw/first_round_test_market_data.csv'
+TEST_FUNADMENTAL_PATH = '../data/raw/first_round_test_fundamental_data.csv'
 
 
 class DataFeeder:

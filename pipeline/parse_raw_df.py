@@ -47,7 +47,8 @@ def pre_process_df(f_df: DataFrame, m_df: DataFrame):
     return f_ds.merge(m_ds)
 
 
-def _dump(is_mini: bool = False, n_days: int = 10, path_prefix='..'):
+def _dump(is_mini: bool = False, n_days: int = 10, path_prefix='..', nc_destination: str = 'nc',
+          raw_source: str = 'raw', is_first_round: bool = True):
     """
     The actual working file that dumps the dataset file.
 
@@ -55,12 +56,12 @@ def _dump(is_mini: bool = False, n_days: int = 10, path_prefix='..'):
     :param n_days:
     :return:
     """
-    NC_PATH = 'data/nc'
-    RAW_PATH = 'data/raw'
+    NC_PATH = f'data/{nc_destination}'
+    RAW_PATH = f'data/{raw_source}'
 
     nc_path = f'{path_prefix}/{NC_PATH}' + (f'_mini/{n_days}' if is_mini else '')
     raw_path = f'{path_prefix}/{RAW_PATH}' + (f'_mini/{n_days}' if is_mini else '')
-    template = '{}/first_round_train_{}_data.csv'
+    template = '{}/' + ('first' if is_first_round else 'second') + '_round_train_{}_data.csv'
     ensure_dir(nc_path)
 
     try:
@@ -105,6 +106,10 @@ def _dump_legacy(is_mini: bool = False, n_days: int = 10, path_prefix='..'):
 class Test(TestCase):
     def test_parse_raw_df_and_dump_full(self):
         _dump(is_mini=False, n_days=-1)
+
+    def test_parse_raw_df_and_dump_second_round(self):
+        _dump(is_mini=False, n_days=-1, nc_destination='nc_2round', raw_source='second_round_datasets',
+              is_first_round=False)
 
     def test_parse_raw_df_and_dump_mini(self, n_days: int = 10):
         _dump(is_mini=True, n_days=n_days)

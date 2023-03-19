@@ -1,0 +1,20 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Export nc files for second round" type="tests" factoryName="Autodetect">
+    <module name="qids-2023-comp" />
+    <option name="INTERPRETER_OPTIONS" value="" />
+    <option name="PARENT_ENVS" value="true" />
+    <option name="SDK_HOME" value="" />
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/pipeline" />
+    <option name="IS_MODULE_SDK" value="true" />
+    <option name="ADD_CONTENT_ROOTS" value="true" />
+    <option name="ADD_SOURCE_ROOTS" value="true" />
+    <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
+    <option name="_new_additionalArguments" value="&quot;&quot;" />
+    <option name="_new_target" value="&quot;fundamental.Test.test_export_fundamental_v0_2round&quot;" />
+    <option name="_new_targetType" value="&quot;PYTHON&quot;" />
+    <method v="2">
+      <option name="RunConfigurationTask" enabled="true" run_configuration_name="Python tests for parse_raw_df.Test.test_parse_raw_df_and_dump_second_round" run_configuration_type="tests" />
+      <option name="RunConfigurationTask" enabled="true" run_configuration_name="Python tests for datatools.Test.test_export_extract_market_2round" run_configuration_type="tests" />
+    </method>
+  </configuration>
+</component>

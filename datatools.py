@@ -372,6 +372,7 @@ def calculate_market_return(return_0: DataArray, weight: Optional[np.ndarray] = 
 
     return market_return.rename(f'market_return_0')
 
+
 def generate_sbumission(pred: Series, filename: str) -> None:
     """
     generate csv for Kaggle submission
@@ -384,11 +385,17 @@ def generate_sbumission(pred: Series, filename: str) -> None:
     pred = pred[['date_time', 'return']]
     pred.to_csv(filename, index=False)
 
+
 class Test(TestCase):
     def test_export_extract_market(self):
         ds = xr.open_dataset('data/nc/base.nc')
         market_brief = extract_market_data(ds[['money', 'volume', 'close', 'open', 'high', 'low']])
         market_brief.to_netcdf('data/nc/market_brief.nc')
+
+    def test_export_extract_market_2round(self):
+        ds = xr.open_dataset('data/nc_2round/base.nc')
+        market_brief = extract_market_data(ds[['money', 'volume', 'close', 'open', 'high', 'low']])
+        market_brief.to_netcdf('data/nc_2round/market_brief.nc')
 
     def test_compare_extract_market(self):
         market_brief = xr.open_dataset('data/nc/market_brief.nc')

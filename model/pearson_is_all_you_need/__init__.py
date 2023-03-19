@@ -13,7 +13,7 @@ from model.neural_network import NN_wrapper
 from pipeline.backtest import evaluation_for_submission, cross_validation
 from pipeline.fundamental import calculate_fundamental_v0
 from pipeline.parse_raw_df import _dump
-from qids_lib import QIDS
+from qids_code_example.qids_lib import QIDS
 from visualization.metric import plot_performance
 
 ##### Load necessary dataset and create them if not present

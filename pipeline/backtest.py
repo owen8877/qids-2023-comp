@@ -5,17 +5,17 @@ from unittest import TestCase
 
 import numpy as np
 import pandas as pd
-from pandas import Series, DataFrame, MultiIndex
+from pandas import Series, DataFrame
 from sklearn.metrics import r2_score
 from tqdm.auto import trange
 from xarray import Dataset, DataArray
 import xarray as xr
 
 import pipeline
-from datatools import extract_market_data, check_dataframe, calculate_market_return
+from datatools import extract_market_data, calculate_market_return
 from pipeline import N_train_days, N_asset, N_timeslot, N_test_days
 from pipeline.parse_raw_df import pre_process_df
-from qids_lib import QIDS
+from qids_code_example.qids_lib import QIDS
 from visualization.metric import Performance
 
 

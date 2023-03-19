@@ -4,6 +4,9 @@
 export
 dump
 /playground/shockspeare/image
+*.zip
+*.pdf
+second_round_datasets
 
 # User-specific stuff
 .idea/**/workspace.xml

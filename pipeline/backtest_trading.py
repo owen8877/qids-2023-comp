@@ -3,7 +3,7 @@ from typing import runtime_checkable, Protocol, Optional, List, Union, Tuple
 from unittest import TestCase
 
 import numpy as np
-from tqdm import trange
+from tqdm.auto import trange
 from xarray import Dataset, DataArray
 
 
@@ -27,9 +27,9 @@ class Portfolio(Protocol):
 Strings = Union[Tuple[str], List[str]]
 
 
-def nan_factory(ds: Dataset):
-    dims = list(ds.dims.keys())
-    arr = np.empty([len(ds[dim]) for dim in dims])
+def nan_factory(**dim_args):
+    dims = list(dim_args.keys())
+    arr = np.empty([len(dim_args[dim]) for dim in dims])
     arr.fill(np.nan)
     return dims, arr
 
@@ -54,7 +54,7 @@ def cross_validation(
     transactions = DataArray(np.nan, dims=['day', 'asset'],
                              coords={'asset': ds.asset.to_numpy(), 'day': np.arange(start_day - 2, end_day + 1)})
     transactions.loc[dict(day=range(start_day - 2, start_day))] = 0
-    stat = Dataset(data_vars={k: nan_factory(ds) for k in ['holding_return', 'open_fee', 'close_fee']},
+    stat = Dataset(data_vars={k: nan_factory(asset=ds.asset, day=ds.day) for k in ['holding_return', 'open_fee', 'close_fee']},
                    coords={'asset': ds.asset, 'day': ds.day})
 
     pbar = trange(start_day, end_day + 1)
@@ -87,7 +87,7 @@ def cross_validation(
         else:
             tr = 0
         # TODO: sanity check
-        transactions.loc[dict(day=current_day)] = tr
+        transactions.loc[dict(day=[current_day])] = tr
         transaction_0 = transactions.sel(day=current_day)
 
         # Post-transaction fee calculation

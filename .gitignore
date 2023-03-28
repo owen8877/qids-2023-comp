@@ -6,6 +6,7 @@ dump
 /playground/shockspeare/image
 *.zip
 *.pdf
+*.png
 second_round_datasets
 
 # User-specific stuff

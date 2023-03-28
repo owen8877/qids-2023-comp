@@ -24,7 +24,7 @@ class MarketPortfolio(Portfolio):
 
 
 class Test(TestCase):
-    def test_market_beta_stat(self):
+    def test_market_stat(self):
         p = MarketPortfolio()
         base_ds = xr.open_dataset('../data/nc_2round/base.nc')
         fundamental_v0_ds = xr.open_dataset('../data/nc_2round/fundamental_v0.nc')

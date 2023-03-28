@@ -78,7 +78,7 @@ def analyze_stat(stat: Dataset, path_prefix='../..', odd_even: bool = False):
     try:
         market_portfolio_stat = xr.open_dataset(f'{path_prefix}/portfolio/stat/market.nc')
     except FileNotFoundError:
-        print('You need to generate the market portfolio stat first!')
+        print('You need to generate the market portfolio stat first! Go and run task `Export market strategy`.')
         raise FileNotFoundError
 
     stat_start, stat_end = stat.day.min().item(), stat.day.max().item()
@@ -102,7 +102,7 @@ def analyze_stat(stat: Dataset, path_prefix='../..', odd_even: bool = False):
 
 
 def bear_market_suite(portfolio: Portfolio, features: Strings, ds: Dataset, lookback_window: Optional[int] = 16,
-                      **kwargs):
+                      path_prefix: str = '../..', odd_even: bool = False, **kwargs):
     for period in BackTestPeriod.periods:
         print(f'Now testing period {period}:')
         start, end = period
@@ -112,4 +112,4 @@ def bear_market_suite(portfolio: Portfolio, features: Strings, ds: Dataset, look
             chunk_start = start - lookback_window - 5
         stat = cross_validation(portfolio, features, ds.sel(day=slice(chunk_start, end)), start_day=start,
                                 lookback_window=lookback_window, **kwargs)
-        analyze_stat(stat)
+        analyze_stat(stat, path_prefix=path_prefix, odd_even=odd_even)

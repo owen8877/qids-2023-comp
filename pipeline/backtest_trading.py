@@ -1,28 +1,12 @@
-from abc import abstractmethod
-from typing import runtime_checkable, Protocol, Optional, List, Union, Tuple
+from typing import Optional, List, Union, Tuple
 from unittest import TestCase
 
 import numpy as np
+import pandas as pd
 from tqdm.auto import trange
 from xarray import Dataset, DataArray
 
-
-@runtime_checkable
-class Portfolio(Protocol):
-    __slots__ = ()
-
-    @abstractmethod
-    def initialize(self, X: Dataset, y: DataArray):
-        pass
-
-    @abstractmethod
-    def train(self, X: Dataset, y: DataArray):
-        pass
-
-    @abstractmethod
-    def construct(self, X: Dataset) -> DataArray:
-        pass
-
+from portfolio import Portfolio
 
 Strings = Union[Tuple[str], List[str]]
 
@@ -34,10 +18,34 @@ def nan_factory(**dim_args):
     return dims, arr
 
 
+def normalize_and_check_transaction(tr):
+    if isinstance(tr, float) or isinstance(tr, int):
+        if tr < 0 or 0 < tr < 0.01 or tr > 1 / 54:
+            raise ValueError(f'The uniform transaction amount {tr:.4f} if either too small or too large!')
+        return tr
+    if isinstance(tr, DataArray):
+        tr = tr.to_numpy()
+    elif isinstance(tr, pd.Series):
+        tr = tr.to_numpy()
+    elif isinstance(tr, list):
+        tr = np.array(tr)
+    if not isinstance(tr, np.ndarray):
+        raise ValueError(f'Type {type(tr)} not recognized!')
+    tr = tr.squeeze()
+
+    assert len(tr) == 54, 'Length shall be 54'
+    assert np.sum(tr) <= 1 + 1e-10, 'Sum shall not exceed 1'
+    assert np.all(tr >= 0), 'All terms shall be non-negative'
+    assert np.all(tr[tr > 0] >= 0.01), 'Some positive entries are smaller than 0.01'
+    return tr
+
+
 def cross_validation(
         portfolio: Portfolio, features: Strings, ds: Dataset, lookback_window: Optional[int] = 16,
         need_full_lookback: bool = False,
         open_position_rate: float = 4e-4, close_position_rate: float = 2e-3,
+        start_day: Optional[int] = None,
+        disable_portfolio_initialization: bool = False,
 ) -> Dataset:
     """
 
@@ -48,16 +56,26 @@ def cross_validation(
     :param need_full_lookback
     :return: dataset that contains trading performance
     """
-    start_day: int = ds.day.min().item()
+    ds_min_day = ds.day.min().item()
+    start_day: int = ds_min_day if start_day is None else start_day
     end_day: int = ds.day.max().item()
 
     transactions = DataArray(np.nan, dims=['day', 'asset'],
                              coords={'asset': ds.asset.to_numpy(), 'day': np.arange(start_day - 2, end_day + 1)})
     transactions.loc[dict(day=range(start_day - 2, start_day))] = 0
-    stat = Dataset(data_vars={k: nan_factory(asset=ds.asset, day=ds.day) for k in ['holding_return', 'open_fee', 'close_fee']},
-                   coords={'asset': ds.asset, 'day': ds.day})
+    stat = Dataset(
+        data_vars={k: nan_factory(asset=ds.asset, day=ds.day) for k in [
+            'holding_return', 'open_fee', 'close_fee',
+            'odd_holding_return', 'odd_open_fee', 'odd_close_fee',
+            'even_holding_return', 'even_open_fee', 'even_close_fee',
+        ]},
+        coords={'asset': ds.asset, 'day': ds.day})
 
     pbar = trange(start_day, end_day + 1)
+    odd_cum_log_return, even_cum_log_return = 0.0, 0.0
+    if not disable_portfolio_initialization:
+        init_slice = slice(start_day - lookback_window - 2, start_day - 2)
+        portfolio.initialize(ds[features].sel(day=init_slice), ds['return'].sel(day=init_slice))
     for current_day in pbar:
         __d = dict(day=current_day)
 
@@ -66,6 +84,15 @@ def cross_validation(
         transaction_2 = transactions.sel(day=current_day - 2)
 
         stat.holding_return.loc[__d] = ds['return_0'].sel(day=current_day) * (transaction_1 + transaction_2) / 2
+        adjustment = 1 if current_day == start_day else (1 + ds['return_0'].sel(day=current_day - 1))
+        if current_day % 2 == 0:
+            # tr_1 is odd and tr_2 is even
+            stat.odd_holding_return.loc[__d] = ds['return_0'].sel(day=current_day) * transaction_1
+            stat.even_holding_return.loc[__d] = ds['return_0'].sel(day=current_day) * transaction_2 * adjustment
+        else:
+            # tr_2 is odd and tr_1 is even
+            stat.odd_holding_return.loc[__d] = ds['return_0'].sel(day=current_day) * transaction_2 * adjustment
+            stat.even_holding_return.loc[__d] = ds['return_0'].sel(day=current_day) * transaction_1
 
         # Transaction stage
         if lookback_window is None:
@@ -74,7 +101,7 @@ def cross_validation(
             chunk_start_day = current_day - lookback_window + 1
 
         def whether_to_construct():
-            if need_full_lookback and (chunk_start_day < start_day):
+            if need_full_lookback and (chunk_start_day < ds_min_day):
                 pbar.set_description(f'Skipped since the lookback chunk has not yet reached full length.')
                 return False
             return current_day <= end_day - 2
@@ -82,11 +109,12 @@ def cross_validation(
         to_construct = whether_to_construct()
 
         if to_construct:
-            sub_ds = ds[features].sel(day=slice(chunk_start_day, current_day))
-            tr = portfolio.construct(sub_ds)
+            train_slice = slice(chunk_start_day - 2, current_day - 2)
+            portfolio.train(ds[features].sel(day=train_slice), ds['return'].sel(day=train_slice))
+            tr = portfolio.construct(ds[features].sel(day=slice(chunk_start_day, current_day)))
         else:
-            tr = 0
-        # TODO: sanity check
+            tr = 0.0
+        tr = normalize_and_check_transaction(tr)
         transactions.loc[dict(day=[current_day])] = tr
         transaction_0 = transactions.sel(day=current_day)
 
@@ -94,10 +122,41 @@ def cross_validation(
         marginal_transaction = transaction_0 - transaction_2
         stat.open_fee.loc[__d] = open_position_rate * marginal_transaction.clip(0) / 2
         stat.close_fee.loc[__d] = (-close_position_rate) * marginal_transaction.clip(None, 0) / 2
+        if current_day % 2 == 0:
+            # handles an even account
+            stat.even_open_fee.loc[__d] = open_position_rate * marginal_transaction.clip(0)
+            stat.even_close_fee.loc[__d] = (-close_position_rate) * marginal_transaction.clip(None, 0)
+            stat.odd_open_fee.loc[__d] = 0
+            stat.odd_close_fee.loc[__d] = 0
+        else:
+            # handles an odd account
+            stat.odd_open_fee.loc[__d] = open_position_rate * marginal_transaction.clip(0)
+            stat.odd_close_fee.loc[__d] = (-close_position_rate) * marginal_transaction.clip(None, 0)
+            stat.even_open_fee.loc[__d] = 0
+            stat.even_close_fee.loc[__d] = 0
 
-        # Train the portfolio
-        if to_construct:
-            portfolio.train(sub_ds, ds['return'].sel(day=slice(chunk_start_day, current_day)))
+        # PnL display; may not be perfect since open fee is calculated differently
+        if current_day % 2 == 0:
+            odd_cum_log_return += np.log(
+                1 + stat.odd_holding_return.sel(day=current_day).sum(dim='asset')
+            )
+            even_cum_log_return += np.log(
+                1 + stat.even_holding_return.sel(day=current_day).sum(dim='asset')
+                - stat.even_open_fee.sel(day=current_day).sum(dim='asset')
+                - stat.even_close_fee.sel(day=current_day).sum(dim='asset')
+            )
+        else:
+            even_cum_log_return += np.log(
+                1 + stat.even_holding_return.sel(day=current_day).sum(dim='asset')
+            )
+            odd_cum_log_return += np.log(
+                1 + stat.odd_holding_return.sel(day=current_day).sum(dim='asset')
+                - stat.odd_open_fee.sel(day=current_day).sum(dim='asset')
+                - stat.odd_close_fee.sel(day=current_day).sum(dim='asset')
+            )
+
+        money = (np.exp(odd_cum_log_return) + np.exp(even_cum_log_return)) / 2
+        pbar.set_description(f'Total PnL={np.log(money):.4f}')
 
     return stat
 

@@ -7,6 +7,7 @@ dump
 *.zip
 *.pdf
 *.png
+stat/
 second_round_datasets
 
 # User-specific stuff

@@ -14,9 +14,11 @@ FUNDAMENTAL_DATA_PATH = f'{historical_data_path}/second_round_train_fundamental_
 RETURN_DATA_PATH = f'{historical_data_path}/second_round_train_return_data.csv'
 
 
+
 class Portfolio:
     def __init__(self):
-        self.lookback_window = 1
+        self.lookback_window = 100
+        pass
 
     def initialize(self, X, y):
         pass
@@ -24,18 +26,55 @@ class Portfolio:
     def train(self, X, y):
         pass
 
+
+    def prepare_feature(self, ds):
+        ds['return_0'] = ds['close_0'] / ds['close_0'].shift(day=1) - 1
+        ds['close_moving_5'] = ds['close_0'].rolling(day=5).mean()
+        ds['close_moving_20'] = ds['close_0'].rolling(day=20).mean()
+        ds['close_moving_100'] = ds['close_0'].rolling(day=100).mean()
+        ds['close_ma_diff_5'] = ds['close_0'] - ds['close_moving_5']
+        ds['close_ma_diff_20'] = ds['close_0'] - ds['close_moving_20']
+        ds['close_ma_diff_100'] = ds['close_0'] - ds['close_moving_100']
+        ds['pe_moving_diff_5'] = ds['pe'].median(dim='asset') - ds['pe'].median(dim='asset').rolling(day=5).mean()
+        ds['pe_moving_diff_20'] = ds['pe'].median(dim='asset') - ds['pe'].median(dim='asset').rolling(day=20).mean()
+        return ds
+
     def construct(self, X):
+        X = self.prepare_feature(X.copy())
+
         current_day = X.day.max().item()
-        # X_ = X.sel(day=slice(current_day-self.lookback_window, current_day))
         X_ = X.sel(day=[current_day])
         pe = X_.pe
-        good_company = (pe > 0) & (pe < 15)  # find companies with good pe
-        market_pe = pe.median().item()  # find market median pe to see if market is hyped
-        investment = np.where(good_company, 1 / pe ** 5, 0)  # invest only the good company
+        bear_thr = -0.05
+        bull_thr = 0.05
+        market_pe = pe.median().item()
+        is_bear = X_['pe_moving_diff_5'] < X_['pe_moving_diff_10']
+
+        dont_buy = (X_.return_0 < bear_thr) & (X_.close_ma_diff_20 < 0) & (X_.close_ma_diff_100 < 0)
+
+        good_company = (pe > 0) & (pe < 15) & (1 - dont_buy)
+        investment = np.where(good_company, pe ** (-5), 0)
+        # print(investment.max())
+        # add stocks with bull performance when market is good (strategy one)
+        # version_1
+        # investment += (market_pe<40)*(X_.close_ma_diff_5>0)*(X_.close_ma_diff_20>0)*(X_.close_ma_diff_100>0)\
+        #               *(X_.return_0>bull_thr)*(X_.return_0-bull_thr)/(X_.return_0-bull_thr).max()*investment.max()
+        # version_2:
+        # investment += (market_pe<40)*(1-is_bear)*(X_.close_ma_diff_5>0)*(X_.close_ma_diff_20>0)*(X_.close_ma_diff_100<0)\
+        #               *(X_.return_0>bull_thr)*(X_.return_0-bull_thr)/(X_.return_0-bull_thr).max()*investment.max()*0.5
+
         s = max(1e-6, investment.sum())
         y = investment / s
-        return y * min(50 / market_pe, 1)  # scaled by market hypeness
 
+        # strategy 2
+        propose = (y * (
+                    min(50 / market_pe, 1) * (1 - is_bear).values + is_bear.values * min(market_pe / 25, 1))).squeeze()
+
+        # propose = (y* (min(50 / market_pe, 1))).squeeze()
+
+        propose[propose < 0.01] = 0
+        # print(current_day, np.where(propose > 0), propose[np.where(propose > 0)])
+        return propose
 
 INITIALIZED: bool = False
 DS: Dataset = None
@@ -97,10 +136,13 @@ def load_historical_data():
     DS.update(Dataset.from_dataframe(m_df))
     DS.update(Dataset.from_dataframe(r_df))
 
+    DS = DS.drop_vars('Unnamed: 0')
+
 
 # Important: Get your decision output
 def get_decisions(market_df: DataFrame, fundamental_df: DataFrame):
     global DS, INITIALIZED, PORTFOLIO
+    # feature = ['pe',  'close_ma_diff_5', 'pe_moving_diff_5', 'pe_moving_diff_10', 'close_ma_diff_20', 'close_ma_diff_100', 'return_0']
     feature = ['pe']
     if not INITIALIZED:
         load_historical_data()
@@ -115,7 +157,7 @@ def get_decisions(market_df: DataFrame, fundamental_df: DataFrame):
 
     # Step 2: get desired data
     DS_current = DS[feature].isel(day=range(-PORTFOLIO.lookback_window, 0))
-    return_current = DS['return'].isel(day=range(-PORTFOLIO.lookback_window, 0))
+    # return_current = DS['return'].isel(day=range(-PORTFOLIO.lookback_window, 0))
 
     # Step 3: run Portfolio and get decision
     # portfolio = PEPortfolio()

@@ -104,12 +104,16 @@ def analyze_stat(stat: Dataset, path_prefix='../..', odd_even: bool = False):
 def bear_market_suite(portfolio: Portfolio, features: Strings, ds: Dataset, lookback_window: Optional[int] = 16,
                       path_prefix: str = '../..', odd_even: bool = False, **kwargs):
     for period in BackTestPeriod.periods:
-        print(f'Now testing period {period}:')
         start, end = period
         if lookback_window is None:
             chunk_start = 1
         else:
             chunk_start = start - lookback_window - 5
-        stat = cross_validation(portfolio, features, ds.sel(day=slice(chunk_start, end)), start_day=start,
+        _ds = ds.sel(day=slice(chunk_start, end))
+        if len(_ds.day) <= 20:
+            print(f'Period {period} not available in ds, skipping...')
+            continue
+        print(f'Now testing period {period}:')
+        stat = cross_validation(portfolio, features, _ds, start_day=start,
                                 lookback_window=lookback_window, **kwargs)
         analyze_stat(stat, path_prefix=path_prefix, odd_even=odd_even)

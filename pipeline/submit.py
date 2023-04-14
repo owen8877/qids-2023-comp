@@ -22,6 +22,9 @@ class Test(TestCase):
             "access_token": ACCESS_TOKEN,
             "group_id": GROUP_ID
         }
+        input('Submit?')
+        input('Really submit?')
+        input('ARE YOU SURE?')
         r = requests.post(URL, files=files, data=values)
         print(r.text)
 
@@ -60,11 +63,16 @@ class Test(TestCase):
             to_construct = day <= days_end - 2
 
             if to_construct:
-                tr = np.array(get_decisions(market_df.iloc[end_index - 50 * 54:end_index],
-                                            fundamental_df.iloc[day * 54 - 54:day * 54]))
+                mm_df = market_df.iloc[end_index - 50 * 54:end_index].copy()
+                mm_df['date'] = day
+                ff_df = fundamental_df.iloc[day * 54 - 54:day * 54].copy()
+                ff_df['date'] = day
+                tr = get_decisions(mm_df, ff_df)
                 # tr = np.random.rand(54)
                 # tr /= tr.sum()
                 assert len(tr) == 54
+                assert isinstance(tr, list)
+                tr = np.array(tr)
             else:
                 tr = np.zeros(54)
             transactions[day] = tr
@@ -79,7 +87,7 @@ class Test(TestCase):
                - np.array([open_fee[day] for day in range(days_for_train + 1, days_end + 1)])[:-1, :]
                - np.array([close_fee[day] for day in range(days_for_train + 1, days_end + 1)])[1:, :])
 
-        plt.plot(np.cumsum(np.log(np.sum(pnl, axis=1)+1)))
+        plt.plot(np.cumsum(np.log(np.sum(pnl, axis=1) + 1)))
         plt.show()
 
     def test_generate_mock_dataset(self):
@@ -101,4 +109,4 @@ class Test(TestCase):
         f_df.to_csv(f'{mock_data_path}/second_round_all_fundamental_data.csv')
 
         r_df = pd.read_csv(f'{second_round_path}/second_round_train_return_data.csv')
-        r_df.iloc[:(days_for_train-2) * 54, :].to_csv(f'{mock_data_path}/second_round_train_return_data.csv')
+        r_df.iloc[:(days_for_train - 2) * 54, :].to_csv(f'{mock_data_path}/second_round_train_return_data.csv')

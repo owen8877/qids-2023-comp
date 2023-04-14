@@ -34,7 +34,9 @@ class Portfolio:
         investment = np.where(good_company, 1 / pe ** 5, 0)  # invest only the good company
         s = max(1e-6, investment.sum())
         y = investment / s
-        return y * min(50 / market_pe, 1)  # scaled by market hypeness
+        propose = y * min(50 / market_pe, 1)  # scaled by market hypeness
+        propose[propose < 0.01] = 0
+        return propose
 
 
 INITIALIZED: bool = False
@@ -109,7 +111,7 @@ def get_decisions(market_df: DataFrame, fundamental_df: DataFrame):
         INITIALIZED = True
 
     # Step 1: parse and process dataframe
-    new_ds = pre_process_df(fundamental_df, market_df)
+    new_ds = pre_process_df(fundamental_df.drop(columns='date'), market_df.drop(columns='date'))
     new_ds['return'] = new_ds['close']
     DS = xr.concat((DS, new_ds), dim='day')
 
@@ -131,4 +133,4 @@ def get_decisions(market_df: DataFrame, fundamental_df: DataFrame):
     ###################################################################################################################
 
     # Output the decision at this moment
-    return decision_list
+    return list(decision_list)

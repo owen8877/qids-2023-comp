@@ -37,10 +37,8 @@ class Test(TestCase):
         import matplotlib.pyplot as plt
         days_for_train = Path.days_for_train
 
-        market_df = pd.read_csv(f'{Path.historical_data_path}/second_round_all_market_data.csv').drop(
-            columns='Unnamed: 0')
-        fundamental_df = pd.read_csv(f'{Path.historical_data_path}/second_round_all_fundamental_data.csv').drop(
-            columns='Unnamed: 0')
+        market_df = pd.read_csv(f'{Path.historical_data_path}/second_round_all_market_data.csv')
+        fundamental_df = pd.read_csv(f'{Path.historical_data_path}/second_round_all_fundamental_data.csv')
 
         days_end = len(fundamental_df) // 54
         # days_end = 200
@@ -101,12 +99,12 @@ class Test(TestCase):
         ensure_dir(mock_data_path)
 
         market_df = pd.read_csv(f'{second_round_path}/second_round_train_market_data.csv')
-        market_df.iloc[:days_for_train * 50 * 54, :].to_csv(f'{mock_data_path}/second_round_train_market_data.csv')
-        market_df.to_csv(f'{mock_data_path}/second_round_all_market_data.csv')
+        market_df.iloc[:days_for_train * 50 * 54, :].set_index('date_time').to_csv(f'{mock_data_path}/second_round_train_market_data.csv')
+        market_df.set_index('date_time').to_csv(f'{mock_data_path}/second_round_all_market_data.csv')
 
         f_df = pd.read_csv(f'{second_round_path}/second_round_train_fundamental_data.csv')
-        f_df.iloc[:days_for_train * 54, :].to_csv(f'{mock_data_path}/second_round_train_fundamental_data.csv')
-        f_df.to_csv(f'{mock_data_path}/second_round_all_fundamental_data.csv')
+        f_df.iloc[:days_for_train * 54, :].set_index('date_time').to_csv(f'{mock_data_path}/second_round_train_fundamental_data.csv')
+        f_df.set_index('date_time').to_csv(f'{mock_data_path}/second_round_all_fundamental_data.csv')
 
         r_df = pd.read_csv(f'{second_round_path}/second_round_train_return_data.csv')
-        r_df.iloc[:(days_for_train - 2) * 54, :].to_csv(f'{mock_data_path}/second_round_train_return_data.csv')
+        r_df.set_index('date_time').iloc[:(days_for_train - 2) * 54, :].to_csv(f'{mock_data_path}/second_round_train_return_data.csv')

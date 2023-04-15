@@ -110,7 +110,7 @@ def bear_market_suite(portfolio: Portfolio, features: Strings, ds: Dataset, look
         else:
             chunk_start = start - lookback_window - 5
         _ds = ds.sel(day=slice(chunk_start, end))
-        if len(_ds.day) <= 20:
+        if len(_ds.day) <= 100:
             print(f'Period {period} not available in ds, skipping...')
             continue
         print(f'Now testing period {period}:')

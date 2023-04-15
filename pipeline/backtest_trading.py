@@ -42,7 +42,7 @@ def normalize_and_check_transaction(tr):
 
 def cross_validation(
         portfolio: Portfolio, features: Strings, ds: Dataset, lookback_window: Optional[int] = 16,
-        need_full_lookback: bool = False,
+        need_full_lookback: bool = False, target: str = 'return',
         open_position_rate: float = 4e-4, close_position_rate: float = 2e-3,
         start_day: Optional[int] = None,
         disable_portfolio_initialization: bool = False,
@@ -75,7 +75,7 @@ def cross_validation(
     odd_cum_log_return, even_cum_log_return = 0.0, 0.0
     if not disable_portfolio_initialization:
         init_slice = slice(start_day - lookback_window - 2, start_day - 2)
-        portfolio.initialize(ds[features].sel(day=init_slice), ds['return'].sel(day=init_slice))
+        portfolio.initialize(ds[features].sel(day=init_slice), ds[target].sel(day=init_slice))
     for current_day in pbar:
         __d = dict(day=current_day)
 
@@ -110,7 +110,7 @@ def cross_validation(
 
         if to_construct:
             train_slice = slice(chunk_start_day - 2, current_day - 2)
-            portfolio.train(ds[features].sel(day=train_slice), ds['return'].sel(day=train_slice))
+            portfolio.train(ds[features].sel(day=train_slice), ds[target].sel(day=train_slice))
             tr = portfolio.construct(ds[features].sel(day=slice(chunk_start_day, current_day)))
         else:
             tr = 0.0

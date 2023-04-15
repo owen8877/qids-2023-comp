@@ -14,6 +14,58 @@ FUNDAMENTAL_DATA_PATH = f'{historical_data_path}/second_round_train_fundamental_
 RETURN_DATA_PATH = f'{historical_data_path}/second_round_train_return_data.csv'
 
 
+def extract_market_data(ds: Dataset):
+    """
+    Input the market data and extract mean price using close
+    prices, volatility, daily return and mean volume
+    :param ds: [xr.Dataset] dataset that contains market data
+    :return: [xr.Dataset] extracted features from market data
+    """
+    assert not ds.isnull().any().to_array().any().item()
+
+    day_money_sum = ds['money'].sum('timeslot')
+    day_volume_sum = ds['volume'].sum('timeslot')
+    avg_price = day_money_sum / day_volume_sum
+    day_volume_s = day_volume_sum.to_series()
+    indx_day = day_volume_s.where(day_volume_s == 0).dropna()
+
+    for day_idx, asset_idx in indx_day.index:
+        sub_ds = ds.sel(day=day_idx, asset=asset_idx)
+        replace_value = (sub_ds['high'].max() + sub_ds['low'].min()) / 2
+        avg_price.loc[dict(day=day_idx, asset=asset_idx)] = replace_value
+
+    assert not avg_price.isnull().any().item(), "Clean data still contains NaN"
+
+    # Compute volatility
+    T = len(ds.timeslot)  # number of time units
+    # note numpy use 0 dof while pd use 1 dof
+    volatility = ds['close'].std('timeslot', ddof=1) * np.sqrt(T)
+
+    # Compute average volume:
+    mean_volume = day_volume_sum / T
+
+    # Daily return that compares the first open and the last close
+    daily_close_price = ds['close'].sel(timeslot=T, drop=True)
+    daily_open_price = ds['open'].sel(timeslot=1, drop=True)
+    daily_high_price = ds['high'].max(dim='timeslot')
+    daily_low_price = ds['low'].min(dim='timeslot')
+
+    previous_close_price = daily_close_price.shift(day=1)
+    previous_close_price[dict(day=0)] = daily_open_price.isel(day=0)
+    daily_return = daily_close_price / previous_close_price - 1
+
+    return Dataset(dict(
+        avg_price=avg_price,
+        volatility=volatility,
+        mean_volume=mean_volume,
+        close_0=daily_close_price,
+        open_0=daily_open_price,
+        high_0=daily_high_price,
+        low_0=daily_low_price,
+        return_0=daily_return,
+    ))
+
+
 
 class Portfolio:
     def __init__(self):
@@ -36,7 +88,7 @@ class Portfolio:
         ds['close_ma_diff_20'] = ds['close_0'] - ds['close_moving_20']
         ds['close_ma_diff_100'] = ds['close_0'] - ds['close_moving_100']
         ds['pe_moving_diff_5'] = ds['pe'].median(dim='asset') - ds['pe'].median(dim='asset').rolling(day=5).mean()
-        ds['pe_moving_diff_20'] = ds['pe'].median(dim='asset') - ds['pe'].median(dim='asset').rolling(day=20).mean()
+        ds['pe_moving_diff_10'] = ds['pe'].median(dim='asset') - ds['pe'].median(dim='asset').rolling(day=10).mean()
         return ds
 
     def construct(self, X):
@@ -117,7 +169,8 @@ def pre_process_df_with_date_legacy(df: DataFrame):
 def pre_process_df(f_df: DataFrame, m_df: DataFrame):
     f_ds = Dataset.from_dataframe(pre_process_df_with_date_legacy(f_df))
     m_ds = Dataset.from_dataframe(pre_process_df_with_date_time_legacy(m_df))
-    return f_ds.merge(m_ds)
+    summary_ds = extract_market_data(m_ds)
+    return f_ds.merge(m_ds).merge(summary_ds)
 
 
 
@@ -130,20 +183,20 @@ def load_historical_data():
 
     f_df = pre_process_df_with_date_legacy(pd.read_csv(FUNDAMENTAL_DATA_PATH))
     m_df = pre_process_df_with_date_time_legacy(pd.read_csv(MARKET_DATA_PATH))
+    summary_ds = extract_market_data(Dataset.from_dataframe(m_df))
     r_df = pre_process_df_with_date_legacy(pd.read_csv(RETURN_DATA_PATH))
 
     DS = Dataset.from_dataframe(f_df)
     DS.update(Dataset.from_dataframe(m_df))
+    DS.update(summary_ds)
     DS.update(Dataset.from_dataframe(r_df))
-
-    DS = DS.drop_vars('Unnamed: 0')
 
 
 # Important: Get your decision output
 def get_decisions(market_df: DataFrame, fundamental_df: DataFrame):
     global DS, INITIALIZED, PORTFOLIO
     # feature = ['pe',  'close_ma_diff_5', 'pe_moving_diff_5', 'pe_moving_diff_10', 'close_ma_diff_20', 'close_ma_diff_100', 'return_0']
-    feature = ['pe']
+    feature = ['pe', 'close_0']
     if not INITIALIZED:
         load_historical_data()
         PORTFOLIO = Portfolio()
@@ -173,4 +226,4 @@ def get_decisions(market_df: DataFrame, fundamental_df: DataFrame):
     ###################################################################################################################
 
     # Output the decision at this moment
-    return decision_list
+    return list(decision_list)
